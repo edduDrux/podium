@@ -1,0 +1,39 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: podium_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-podium}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-podium}
+      POSTGRES_DB: ${POSTGRES_DB:-podium}
+    # Host 5432 já é usado pelo Postgres local do dev; publicamos em 5433 para evitar conflito.
+    # (A API não usa esta porta — ela fala com `db:5432` pela rede interna do Compose.)
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-podium} -d ${POSTGRES_DB:-podium}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    container_name: podium_api
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/code
+      - ./storage:/code/storage
+    depends_on:
+      db:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  postgres_data:

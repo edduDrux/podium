@@ -1,0 +1,30 @@
+# Versões resolvidas e validadas em Python 3.14 (exigência do PRD).
+
+# --- Framework Web ---
+fastapi==0.139.2
+uvicorn[standard]==0.51.0
+python-multipart==0.0.32
+
+# --- Configuração / Validação ---
+pydantic==2.13.4
+pydantic-settings==2.14.2
+
+# --- Banco de Dados (SQLAlchemy 2.0 asyncio + PostgreSQL) ---
+sqlalchemy[asyncio]==2.0.51
+asyncpg==0.31.0
+alembic==1.18.5
+
+# --- Processamento de Arquivos ---
+PyMuPDF==1.28.0        # extração de texto de PDF
+python-pptx==1.0.2     # extração de texto de PPTx
+pydub==0.25.1          # manipulação de áudio (requer FFmpeg)
+# O pydub usa o módulo `audioop`, removido da stdlib no Python 3.13 (PEP 594).
+# Este backport o reintroduz — sem ele o pydub não importa na 3.14.
+audioop-lts==0.2.2
+aiofiles==25.1.0
+
+# --- Inteligência Artificial (Google Gemini) ---
+# `openai` fala com o endpoint compatível do Gemini (LLM);
+# `httpx` chama a API nativa do Gemini para a transcrição do áudio (STT).
+openai==2.48.0
+httpx==0.28.1
