@@ -25,7 +25,12 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://podium:podium@localhost:5432/podium"
 
     # --- CORS (o Cliente VR em Unity não usa CORS, mas ferramentas web sim) ---
-    BACKEND_CORS_ORIGINS: list[str] = Field(default_factory=lambda: ["*"])
+    # Não usar ["*"]: o `main.py` sobe o middleware com `allow_credentials=True`, e a spec
+    # de CORS proíbe curinga junto de credenciais — o navegador rejeita a resposta e o
+    # erro aparece do lado do cliente, longe da causa. Origens explícitas sempre.
+    BACKEND_CORS_ORIGINS: list[str] = Field(
+        default_factory=lambda: ["http://localhost:3000"]
+    )
 
     # --- IA: Google Gemini (free tier) ---
     # O Gemini expõe DUAS interfaces e o PODIUM usa as duas:
@@ -36,6 +41,14 @@ class Settings(BaseSettings):
     GEMINI_API_BASE: str = "https://generativelanguage.googleapis.com/v1beta"
     LLM_MODEL: str = "gemini-flash-latest"
     STT_MODEL: str = "gemini-flash-latest"
+
+    # A tarefa da banca é extrair e cobrar o que está no material, não variar
+    # criativamente — e criatividade, aqui, se manifesta como invenção.
+    LLM_TEMPERATURE: float = 0.3
+    # Similaridade mínima (0-100) entre o trecho citado pelo LLM e o texto real do slide
+    # para a pergunta ser aceita. Alto o bastante para exigir cópia, tolerante o bastante
+    # para o ruído de extração (quebras de linha, espaços, aspas tipográficas).
+    GROUNDING_MIN_SCORE: int = 90
 
     # Áudio é enviado inline (base64) ao Gemini; o limite da requisição é ~20 MB.
     MAX_INLINE_AUDIO_MB: int = 18

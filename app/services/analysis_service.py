@@ -1,9 +1,11 @@
 import logging
 import uuid
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from pydantic import ValidationError
 
 from app.core.database import AsyncSessionLocal
 from app.core.enums import PresentationStatus
@@ -13,6 +15,16 @@ from app.schemas.feedback import FeedbackResponse, GeneratedQuestion, SpeechMetr
 from app.services import audio_service, llm_service, stt_service
 
 logger = logging.getLogger(__name__)
+
+# As contagens do aterramento não são métrica de FORMA, mas moram no mesmo JSONB por
+# não existir coluna própria para elas — criar uma exigiria migration. A chave é separada
+# para que `SpeechMetrics` continue representando só o que vem do áudio.
+GROUNDING_KEY = "aterramento"
+
+SEM_PERGUNTAS_ANCORADAS = (
+    "Nenhuma das perguntas formuladas pôde ser ancorada em um trecho literal dos slides, "
+    "por isso a banca não devolveu perguntas nesta sessão."
+)
 
 
 async def run_pipeline_in_background(session_id: uuid.UUID) -> None:
@@ -51,25 +63,33 @@ async def run_pipeline(db: AsyncSession, presentation: Presentation) -> Feedback
     await db.commit()
 
     try:
-        # 1. Áudio bruto do VR -> formato enxuto -> transcrição (Whisper)
+        # 1. Áudio bruto do VR -> formato enxuto -> transcrição (Gemini multimodal)
         stt_ready_path = audio_service.normalize_for_stt(presentation.audio_path)
         transcript = await stt_service.transcribe(stt_ready_path)
 
         # 2. FORMA: ritmo e pausas
         metrics = audio_service.analyze_form(presentation.audio_path, transcript)
 
-        # 3. CONTEÚDO: slides + transcrição + persona -> perguntas da banca
-        questions, content_analysis = await llm_service.generate_questions(
+        # 3. CONTEÚDO: slides + transcrição + persona -> perguntas ancoradas da banca
+        generation = await llm_service.generate_questions(
             slides_text=presentation.slides_text or "",
             transcript=transcript,
             persona=presentation.persona,
         )
 
+        content_analysis = _consolidar_analise(generation, presentation.id)
+
         feedback = presentation.feedback or Feedback(presentation_id=presentation.id)
         feedback.transcript = transcript
-        feedback.questions = [q.model_dump() for q in questions]
+        feedback.questions = [q.model_dump() for q in generation.questions]
         feedback.content_analysis = content_analysis
-        feedback.metrics = metrics.model_dump()
+        feedback.metrics = {
+            **metrics.model_dump(),
+            GROUNDING_KEY: {
+                "perguntas_geradas": generation.perguntas_geradas,
+                "perguntas_aprovadas": generation.perguntas_aprovadas,
+            },
+        }
 
         db.add(feedback)
         presentation.status = PresentationStatus.COMPLETED
@@ -78,9 +98,11 @@ async def run_pipeline(db: AsyncSession, presentation: Presentation) -> Feedback
         return FeedbackResponse(
             session_id=presentation.id,
             transcript=transcript,
-            questions=questions,
+            questions=generation.questions,
             content_analysis=content_analysis,
             metrics=metrics,
+            perguntas_geradas=generation.perguntas_geradas,
+            perguntas_aprovadas=generation.perguntas_aprovadas,
         )
 
     except Exception as exc:
@@ -91,16 +113,72 @@ async def run_pipeline(db: AsyncSession, presentation: Presentation) -> Feedback
         raise
 
 
+def _consolidar_analise(
+    generation: llm_service.GenerationResult, session_id: uuid.UUID
+) -> str:
+    """Acrescenta o aviso de banca vazia à análise textual, quando for o caso.
+
+    Sessão sem pergunta aprovada NÃO é falha: o pipeline rodou inteiro e a resposta
+    honesta é "o material não sustentou nenhuma pergunta". Marcar como FAILED apagaria a
+    transcrição e as métricas de forma, que continuam válidas, e ainda daria ao usuário
+    um erro técnico no lugar de um resultado legítimo.
+    """
+    if generation.questions:
+        return generation.content_analysis
+
+    logger.warning(
+        "Sessão %s concluída sem perguntas aprovadas (%d geradas pelo LLM).",
+        session_id,
+        generation.perguntas_geradas,
+    )
+
+    if not generation.content_analysis:
+        return SEM_PERGUNTAS_ANCORADAS
+    return f"{generation.content_analysis}\n\n{SEM_PERGUNTAS_ANCORADAS}"
+
+
 def to_response(presentation: Presentation) -> FeedbackResponse:
     """Converte um Feedback já persistido no contrato de saída."""
     feedback = presentation.feedback
     if feedback is None:
         return FeedbackResponse(session_id=presentation.id)
 
+    metrics_data = dict(feedback.metrics or {})
+    aterramento = metrics_data.pop(GROUNDING_KEY, {}) or {}
+    questions = _questions_persistidas(feedback.questions, presentation.id)
+
     return FeedbackResponse(
         session_id=presentation.id,
         transcript=feedback.transcript,
-        questions=[GeneratedQuestion(**q) for q in feedback.questions],
+        questions=questions,
         content_analysis=feedback.content_analysis,
-        metrics=SpeechMetrics(**feedback.metrics) if feedback.metrics else SpeechMetrics(),
+        metrics=SpeechMetrics(**metrics_data) if metrics_data else SpeechMetrics(),
+        # Feedback gravado antes da camada de aterramento não tem as contagens; nesse caso
+        # o que existe no banco já são as perguntas efetivamente entregues.
+        perguntas_geradas=aterramento.get("perguntas_geradas", len(questions)),
+        perguntas_aprovadas=aterramento.get("perguntas_aprovadas", len(questions)),
     )
+
+
+def _questions_persistidas(
+    itens: list[dict[str, Any]], session_id: uuid.UUID
+) -> list[GeneratedQuestion]:
+    """Reconstrói as perguntas gravadas, ignorando as que não cabem no contrato atual.
+
+    Feedbacks gerados antes do aterramento não têm `slide_origem`/`trecho_literal`.
+    Deixar a validação estourar transformaria o GET dessas sessões em erro 500 — melhor
+    devolver o que ainda é legível do que perder a sessão inteira.
+    """
+    perguntas: list[GeneratedQuestion] = []
+
+    for item in itens or []:
+        try:
+            perguntas.append(GeneratedQuestion(**item))
+        except (ValidationError, TypeError):
+            logger.warning(
+                "Pergunta persistida da sessão %s é incompatível com o contrato atual "
+                "(provavelmente anterior ao aterramento) e foi omitida.",
+                session_id,
+            )
+
+    return perguntas
