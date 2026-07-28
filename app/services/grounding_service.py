@@ -21,7 +21,11 @@ from rapidfuzz import fuzz
 from app.schemas.feedback import GeneratedQuestion
 
 # O marcador que `pdf_service` e `pptx_service` emitem — a âncora de evidência do sistema.
-SLIDE_MARKER_RE = re.compile(r"\[Slide\s+(\d+)\]")
+# Ancorado em linha inteira (`^...$` + MULTILINE) porque o marcador só é marcador quando
+# ocupa a linha sozinho. Sem a âncora, um slide que CITE "[Slide 7]" no meio de uma frase
+# vira ponto de corte: nasce um slide fantasma e o slide real perde tudo que vinha depois
+# da citação — e aí um `trecho_literal` honesto dessa metade é reprovado como inventado.
+SLIDE_MARKER_RE = re.compile(r"^\[Slide\s+(\d+)\]$", re.MULTILINE)
 PUNCTUATION_RE = re.compile(r"[^\w\s]", re.UNICODE)
 WHITESPACE_RE = re.compile(r"\s+")
 
