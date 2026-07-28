@@ -77,19 +77,30 @@ app/
   core/       config.py        Settings (pydantic-settings, lê .env)
               database.py      engine async + AsyncSessionLocal
               enums.py         ScenarioType, PersonaType, SourceFileType, PresentationStatus
-  models/     user, presentation, feedback  (SQLAlchemy)
+  models/     user, presentation, feedback, llm_call  (SQLAlchemy)
   schemas/    presentation, feedback        (Pydantic — contrato da API)
+  domain/     slides            contrato do marcador [Slide N]: emite E interpreta
+              banca             ResultadoGeracao — vocabulário do pipeline
+              ports             Protocols: Auditoria, Transcritor, BancaExaminadora
   api/v1/endpoints/presentations.py         init / audio / analyze / status / feedback
   services/   slides_service    porta única de ingestão; despacha por formato
-              pdf_service       extração via PyMuPDF     -> emite [Slide N]
-              pptx_service      extração via python-pptx -> emite [Slide N]
+              pdf_service       extração via PyMuPDF     -> usa domain.slides
+              pptx_service      extração via python-pptx -> usa domain.slides
               storage_service   uploads em disco + purga de sessões vencidas
               audio_service     normalização p/ STT + métricas de forma
-              stt_service       transcrição (Gemini nativo)
-              llm_service       geração das perguntas (Gemini via SDK openai)
+              stt_service       GeminiTranscritor — adaptador de `Transcritor`
+              llm_service       GeminiBanca — adaptador de `BancaExaminadora`
+              audit_service     AuditoriaBanco — adaptador de `Auditoria` (llm_calls)
               grounding_service validação de aterramento das perguntas
+              provedores        raiz de composição: escolhe as implementações
               analysis_service  orquestra o pipeline do Feedback Duplo
 ```
+
+**Direção da dependência.** `domain/` não importa framework, banco nem SDK de IA — só
+Python e os próprios contratos. Os adaptadores recebem o que precisam pelas portas em vez
+de importar; `provedores.py` é o único módulo que conhece as escolhas concretas, e é só
+ele que muda para trocar de provedor. É isso que permite rodar `run_pipeline` inteiro com
+dublês, sem rede, sem cota de IA e sem Postgres.
 
 **Fluxo de uma sessão:** `POST /init` (cria sessão, extrai texto dos slides) →
 `POST /{id}/audio` (áudio inteiro ou em chunks) → `POST /{id}/analyze` (responde **202**
@@ -161,7 +172,10 @@ Não "corrigir" estes itens — a simplificação foi deliberada:
 
 ## 7. Contrato do marcador de slide (verificado empiricamente)
 
-Isto é a âncora de evidência de todo o sistema. **Nunca alterar sem atualizar o parser junto.**
+Isto é a âncora de evidência de todo o sistema. **Tudo mora em `app/domain/slides.py`** —
+emitir (`bloco`, `montar`), normalizar (`normalizar`) e interpretar (`parse`, `MARCADOR_RE`)
+são vizinhos de propósito: antes o formato estava escrito em três lugares independentes e
+só a disciplina os mantinha em acordo.
 
 Formato exato emitido pelos dois extratores:
 
@@ -170,27 +184,28 @@ Formato exato emitido pelos dois extratores:
 ```
 
 Colchetes, `S` maiúsculo, um espaço, número, `\n` logo após. Separador entre slides:
-`\n\n`. Produzido em `pdf_service.py:18` e `pptx_service.py:23` — idêntico nos dois, então
-um único parser serve para ambos.
+`\n\n`. `pdf_service` e `pptx_service` chamam `slides.bloco()` + `slides.montar()`, então
+não há como um formato divergir do outro — **verificado: para o mesmo conteúdo, PDF e PPTx
+produzem saída idêntica caractere por caractere.**
 
 **Três armadilhas confirmadas:**
 
-1. **`_normalize` colapsa `\n{3,}` em `\n\n`** (`pdf_service.py:25`). Logo, o *conteúdo* de
-   um slide também pode conter `\n\n`. Um `split("\n\n")` fragmenta slides e atribui
-   pedaços ao slide errado. **O parse tem que ser pelo regex do marcador.**
+1. **`normalizar` colapsa `\n{3,}` em `\n\n`.** Logo, o *conteúdo* de um slide também pode
+   conter `\n\n`. Um `split("\n\n")` fragmenta slides e atribui pedaços ao slide errado.
+   **O parse tem que ser pelo regex do marcador.**
 
 2. **Sem a âncora `^...$`, surgem slides fantasma.** O risco é concreto neste projeto: a
    apresentação do próprio TCC fala sobre slides, então o texto pode conter literalmente
    "[Slide 7]". Sem âncora o marcador citado no meio de uma frase vira ponto de corte:
    nasce uma entrada fantasma **e o slide real perde tudo que vinha depois da citação** —
    o que faz um `trecho_literal` honesto dessa metade ser reprovado como
-   `TRECHO_NAO_LITERAL`. Por isso `grounding_service.SLIDE_MARKER_RE` é
-   `r"^\[Slide\s+(\d+)\]$"` com `re.MULTILINE`. O `\s+` mantém tolerância a espaço extra
-   dentro do marcador; a âncora é o que não pode sair.
+   `TRECHO_NAO_LITERAL`. Por isso `slides.MARCADOR_RE` é `r"^\[Slide\s+(\d+)\]$"` com
+   `re.MULTILINE`. O `\s+` mantém tolerância a espaço extra dentro do marcador; a âncora é
+   o que não pode sair.
 
-3. **A numeração tem buracos legítimos.** `pdf_service.py:17` pula páginas sem texto
-   (`if text:`), então um PDF de 5 páginas pode produzir `{1, 2, 5}`. Isso é correto — não
-   renumerar, não preencher.
+3. **A numeração tem buracos legítimos.** `pdf_service` pula páginas sem texto (`if text:`),
+   então um PDF de 5 páginas pode produzir `{1, 2, 5}`. Isso é correto — não renumerar, não
+   preencher.
 
 ---
 
@@ -215,8 +230,8 @@ um único parser serve para ambos.
 
 ### Já implementado (PR #1 + correções subsequentes)
 
-- **Camada de aterramento.** `grounding_service` com `parse_slides`, `_normalizar` e
-  `validar`; `GeneratedQuestion` exige `slide_origem` e `trecho_literal`;
+- **Camada de aterramento.** `grounding_service.validar` sobre `slides.parse`;
+  `GeneratedQuestion` exige `slide_origem` e `trecho_literal`;
   `GROUNDING_MIN_SCORE=90`; contadores em `FeedbackResponse`.
   **Limiar 90 validado empiricamente:** numa sessão real com 5 slides, o Gemini copiou
   literalmente e as 6 perguntas pontuaram `partial_ratio` **100.0** — nenhuma perto da
@@ -233,18 +248,28 @@ um único parser serve para ambos.
 - **`/init` recusa arquivo sem texto extraível** com 422 (`slides_service.has_extractable_text`).
 - **`json.loads` do LLM protegido** (`llm_service._parse_payload`): JSON inválido ou não-objeto
   conclui a sessão sem perguntas, não como FAILED.
+- **Auditoria das chamadas de IA** em `llm_calls` (migration `e8732f4eb5c9`), append-only,
+  com tokens, latência, sucesso e o erro quando falha. `audit_service` abre sessão de banco
+  própria: um INSERT falhando dentro da transação do pipeline invalidaria a sessão do
+  SQLAlchemy e levaria junto o commit de um feedback já pronto. Verificado com a tabela
+  ausente — não levanta, e repropaga intacta a exceção de quem foi medido.
+- **Contrato do marcador centralizado** em `app/domain/slides.py`; PDF e PPTx produzem
+  saída idêntica caractere por caractere para o mesmo conteúdo.
+- **Portas e inversão de dependência** (`app/domain/ports.py` + `services/provedores.py`):
+  os adaptadores de IA recebem a auditoria em vez de importá-la, e `run_pipeline` aceita
+  `transcritor`/`banca` por parâmetro. O pipeline completo roda com dublês, sem rede, sem
+  cota de IA.
 
-### P0 — Sem auditoria de chamadas de IA
+### P1 — Índice de chunk de áudio pode colidir
 
-Modelos existentes: `User`, `Presentation`, `Feedback`. Nenhum registro de modelo, tokens,
-latência, custo ou sucesso.
+`storage_service.next_chunk_path` deriva o índice de `len(list_audio_chunks())`. Se um
+chunk sumir do meio (`chunk_000`, `chunk_002` presentes), `len` é 2 e o próximo caminho é
+`chunk_002` — **sobrescreve um pedaço de fala existente**. Dois uploads simultâneos de
+chunk calculam o mesmo índice pelo mesmo motivo.
 
-**Sem esses dados coletados durante o desenvolvimento, não existe capítulo de validação
-técnica do TCC** — latência p50/p95, custo por sessão e taxa de aterramento não são
-reconstruíveis depois. Modelo `LLMCall` com `presentation_id`, `etapa`
-(`stt` | `geracao_perguntas`), `provider`, `modelo`, `temperatura`, `tokens_entrada`,
-`tokens_saida` (nullable), `latencia_ms`, `sucesso`, `erro`, `criado_em`. Falha ao gravar
-auditoria **nunca** derruba o pipeline. Exige migration.
+O sintoma é áudio remontado com um trecho faltando: nenhum erro aparece, mas a duração
+muda e contamina todas as métricas de forma. Correção: derivar do maior índice presente,
+não da contagem.
 
 ### P1 — Alucinação numérica passa pelo aterramento
 
@@ -342,17 +367,17 @@ que o limiar é 90 e não 80.
 
 1. ~~Camada de aterramento~~ — feita (PR #1), limiar 90 validado em sessão real
 2. ~~Falha silenciosa com PDF sem texto~~ — feita
-3. Auditoria `LLMCall` — P0, exige migration. **Cada sessão rodada sem isso é dado de
-   validação perdido para sempre** — as duas sessões end-to-end já queimadas não deixaram
-   registro de tokens, latência nem custo
+3. ~~Auditoria `LLMCall`~~ — feita, migration `e8732f4eb5c9` aplicada
 4. Cobertura de slides (cruzar material com transcrição) — diferencial do TCC, e é o que
    torna o teste adversarial do §14 interpretável (ver a nota lá)
-5. Emoji injetado pelo STT — P1, contamina transcrição e métricas de forma
-6. Alucinação numérica no aterramento — P1
-7. Flag de truncamento de contexto — P2
-8. Reduzir para 2 personas — P3, decisão do autor
-9. Testes de `parse_slides`, `_normalizar`, `validar` e cálculo de métricas — P3
-10. Autenticação, antes de qualquer deploy público — bloqueante para produção
+5. Índice de chunk de áudio pode sobrescrever fala — P1
+6. Emoji injetado pelo STT — P1, contamina transcrição e métricas de forma
+7. Alucinação numérica no aterramento — P1
+8. Flag de truncamento de contexto — P2
+9. Reduzir para 2 personas — P3, decisão do autor
+10. Testes de `slides.parse`, `_normalizar`, `validar`, métricas e do `run_pipeline` com
+    dublês — P3, agora sem depender de rede nem de Postgres graças às portas
+11. Autenticação, antes de qualquer deploy público — bloqueante para produção
 
 ### Decidido para o TCC III, não implementar agora
 
@@ -373,8 +398,8 @@ O objetivo destas não é operacional, é o capítulo de validação. Instrument
 |---|---|---|
 | Taxa de aterramento (aprovadas ÷ geradas) | `FeedbackResponse` | ≥ 80% — **medido: 100% (6/6), n=1 sessão** |
 | Rejeições por motivo | log de descarte | diagnóstico |
-| Latência de geração p50/p95 | `LLMCall.latencia_ms` | p95 < 12 s |
-| Latência de transcrição por minuto de áudio | `LLMCall` | < 0,25× tempo real |
+| Latência de geração p50/p95 | `LLMCall.latencia_ms` | p95 < 12 s — **medido: 12,3 s e 15,9 s (n=2); a meta parece otimista** |
+| Latência de transcrição por minuto de áudio | `LLMCall` | < 0,25× tempo real — **medido: 0,061× (n=2)** |
 | Custo por sessão | `LLMCall` tokens | documentar |
 | WER do STT | corpus anotado à mão, 10 áudios | ≤ 15% |
 | Relevância percebida das perguntas | Likert 1–5, avaliadores humanos | ≥ 4,0 |
