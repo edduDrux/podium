@@ -65,7 +65,9 @@ async def run_pipeline(db: AsyncSession, presentation: Presentation) -> Feedback
     try:
         # 1. Áudio bruto do VR -> formato enxuto -> transcrição (Gemini multimodal)
         stt_ready_path = audio_service.normalize_for_stt(presentation.audio_path)
-        transcript = await stt_service.transcribe(stt_ready_path)
+        transcript = await stt_service.transcribe(
+            stt_ready_path, presentation_id=presentation.id
+        )
 
         # 2. FORMA: ritmo e pausas
         metrics = audio_service.analyze_form(presentation.audio_path, transcript)
@@ -75,6 +77,7 @@ async def run_pipeline(db: AsyncSession, presentation: Presentation) -> Feedback
             slides_text=presentation.slides_text or "",
             transcript=transcript,
             persona=presentation.persona,
+            presentation_id=presentation.id,
         )
 
         content_analysis = _consolidar_analise(generation, presentation.id)

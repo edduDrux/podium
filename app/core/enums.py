@@ -23,6 +23,17 @@ class SourceFileType(StrEnum):
     PPTX = "pptx"
 
 
+class LLMCallStage(StrEnum):
+    """Etapa do pipeline que originou a chamada de IA.
+
+    Separa as duas porque elas têm perfis de custo e latência muito diferentes: o STT
+    cresce com a duração do áudio, a geração cresce com o tamanho do material.
+    """
+
+    STT = "stt"
+    GERACAO_PERGUNTAS = "geracao_perguntas"
+
+
 class PresentationStatus(StrEnum):
     """Ciclo de vida de uma sessão de apresentação."""
 

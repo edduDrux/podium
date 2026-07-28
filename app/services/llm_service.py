@@ -1,14 +1,15 @@
 import json
 import logging
+import uuid
 from typing import NamedTuple
 
 from openai import AsyncOpenAI
 from pydantic import ValidationError
 
 from app.core.config import settings
-from app.core.enums import PersonaType
+from app.core.enums import LLMCallStage, PersonaType
 from app.schemas.feedback import GeneratedQuestion
-from app.services import grounding_service
+from app.services import audit_service, grounding_service
 
 logger = logging.getLogger(__name__)
 
@@ -135,12 +136,15 @@ async def generate_questions(
     slides_text: str,
     transcript: str,
     persona: PersonaType,
+    presentation_id: uuid.UUID | None = None,
 ) -> GenerationResult:
     """Monta o prompt (slides + transcrição + persona) e devolve as perguntas ancoradas.
 
     Só retornam perguntas que passaram pelo `grounding_service`. O prompt pede o
     aterramento e a validação o cobra: pedir sem conferir deixaria a garantia por conta
     da boa vontade do modelo.
+
+    `presentation_id` serve só para a auditoria (`LLMCall`); omiti-lo desliga o registro.
     """
     messages = [
         {
@@ -159,14 +163,21 @@ async def generate_questions(
         },
     ]
 
-    response = await get_client().chat.completions.create(
-        model=settings.LLM_MODEL,
-        messages=messages,
-        response_format={"type": "json_object"},
-        # Temperatura baixa: a tarefa é extrair e cobrar o que está no material, não
-        # variar criativamente. Criatividade aqui se manifesta como invenção.
-        temperature=settings.LLM_TEMPERATURE,
-    )
+    async with audit_service.medir(
+        presentation_id=presentation_id,
+        etapa=LLMCallStage.GERACAO_PERGUNTAS,
+        modelo=settings.LLM_MODEL,
+        temperatura=settings.LLM_TEMPERATURE,
+    ) as uso:
+        response = await get_client().chat.completions.create(
+            model=settings.LLM_MODEL,
+            messages=messages,
+            response_format={"type": "json_object"},
+            # Temperatura baixa: a tarefa é extrair e cobrar o que está no material, não
+            # variar criativamente. Criatividade aqui se manifesta como invenção.
+            temperature=settings.LLM_TEMPERATURE,
+        )
+        uso.update(_extract_usage(response))
 
     payload = _parse_payload(response.choices[0].message.content)
     itens = payload.get("questions") or []
@@ -187,6 +198,21 @@ async def generate_questions(
         perguntas_geradas=len(itens),
         perguntas_aprovadas=len(aprovadas),
     )
+
+
+def _extract_usage(response) -> dict[str, int | None]:
+    """Lê o consumo de tokens da resposta do SDK `openai`.
+
+    Tolerante porque o endpoint compatível do Gemini não garante preencher `usage` — e
+    perder a contagem de uma chamada não pode custar as perguntas dela.
+    """
+    uso = getattr(response, "usage", None)
+    if uso is None:
+        return {"tokens_entrada": None, "tokens_saida": None}
+    return {
+        "tokens_entrada": getattr(uso, "prompt_tokens", None),
+        "tokens_saida": getattr(uso, "completion_tokens", None),
+    }
 
 
 def _parse_payload(content: str | None) -> dict:
