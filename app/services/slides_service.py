@@ -18,6 +18,11 @@ PPTX_CONTENT_TYPES = {
 
 EXTENSION_BY_TYPE = {SourceFileType.PDF: ".pdf", SourceFileType.PPTX: ".pptx"}
 
+# Abaixo disto não há material para ancorar pergunta nenhuma. É o caso do PDF exportado
+# como imagem (slide escaneado ou "impresso"): o arquivo abre e tem páginas, então
+# `is_valid` aprova, mas a extração devolve praticamente nada.
+MIN_EXTRACTABLE_CHARS = 50
+
 
 def detect_type(filename: str | None, content_type: str | None) -> SourceFileType | None:
     """Identifica o formato pela extensão e, como reforço, pelo content-type.
@@ -53,3 +58,14 @@ def extract_text(path: Path | str, file_type: SourceFileType) -> str:
     if file_type is SourceFileType.PDF:
         return pdf_service.extract_text(path)
     return pptx_service.extract_text(path)
+
+
+def has_extractable_text(slides_text: str) -> bool:
+    """O texto extraído sustenta a análise de conteúdo?
+
+    Separado de `is_valid` de propósito: aquele responde "o arquivo abre?", este responde
+    "o arquivo tem conteúdo?". Sem esta segunda pergunta o pipeline seguiria com
+    `slides_text` vazio, o aterramento reprovaria tudo por falta de referência e o usuário
+    receberia uma sessão sem perguntas sem nunca saber que a causa foi o arquivo.
+    """
+    return len(slides_text.strip()) >= MIN_EXTRACTABLE_CHARS
