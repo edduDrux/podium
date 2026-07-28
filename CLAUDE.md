@@ -6,7 +6,9 @@ não como suposição — onde houver `arquivo.py:linha`, o fato foi confirmado 
 executando o código.
 
 Última verificação completa: 2026-07-28, sobre o merge do PR #1
-(`fix/aterramento-e-metricas`).
+(`fix/aterramento-e-metricas`) e duas sessões end-to-end reais contra o Gemini
+(uma legítima, uma adversarial). Os números do §14 marcados como *medido* vêm dessas
+sessões, não de estimativa.
 
 ---
 
@@ -216,6 +218,10 @@ um único parser serve para ambos.
 - **Camada de aterramento.** `grounding_service` com `parse_slides`, `_normalizar` e
   `validar`; `GeneratedQuestion` exige `slide_origem` e `trecho_literal`;
   `GROUNDING_MIN_SCORE=90`; contadores em `FeedbackResponse`.
+  **Limiar 90 validado empiricamente:** numa sessão real com 5 slides, o Gemini copiou
+  literalmente e as 6 perguntas pontuaram `partial_ratio` **100.0** — nenhuma perto da
+  fronteira, taxa de aterramento 100%. O risco de falso negativo levantado antes do teste
+  não se confirmou com este modelo e este prompt. Não baixar o limiar sem nova medição.
 - **`LLM_TEMPERATURE=0.3`** na geração (era `0.8`).
 - **Parsing item a item** do JSON do LLM, com `except (ValidationError, TypeError)`
   específico e descarte logado — uma pergunta malformada não derruba as outras.
@@ -249,6 +255,18 @@ a caractere e um dígito quase não move o score.
 É o erro mais perigoso numa banca de TCC e atinge direto a meta de alucinação residual do
 §11. Mitigação possível: extrair os números do `trecho_literal` e conferir presença literal
 no slide, como checagem separada do score difuso.
+
+### P1 — O STT injeta emoji na transcrição
+
+Medido numa sessão real: transcrevendo uma fala sobre comida, o Gemini inseriu **18 emojis**
+na transcrição, vários no meio de palavras — `"na vés 🥣 pera"`, `"ceb 🥩 ola"`,
+`"a lingui 🍊 na"`. A sessão de assunto acadêmico veio com zero, então o gatilho parece ser
+o conteúdo, não o áudio.
+
+Contamina três coisas: o texto mostrado ao usuário, o `word_count`/`words_per_minute` das
+métricas de FORMA (palavra quebrada vira duas), e a medição de WER do §14 — que fica sem
+sentido se o próprio STT adiciona tokens que ninguém falou. Correção: instruir o prompt do
+`stt_service` a não acrescentar caractere não falado e/ou filtrar na saída.
 
 ### P2 — Truncamento silencioso do contexto
 
@@ -322,15 +340,19 @@ que o limiar é 90 e não 80.
 
 ## 13. Backlog
 
-1. ~~Camada de aterramento~~ — feita (PR #1)
+1. ~~Camada de aterramento~~ — feita (PR #1), limiar 90 validado em sessão real
 2. ~~Falha silenciosa com PDF sem texto~~ — feita
-3. Auditoria `LLMCall` — P0, exige migration
-4. Alucinação numérica no aterramento — P1
-5. Flag de truncamento de contexto — P2
-6. Reduzir para 2 personas — P3, decisão do autor
-7. Testes de `parse_slides`, `_normalizar`, `validar` e cálculo de métricas — P3
-8. Cobertura de slides (cruzar material com transcrição) — diferencial do TCC
-9. Autenticação, antes de qualquer deploy público — bloqueante para produção
+3. Auditoria `LLMCall` — P0, exige migration. **Cada sessão rodada sem isso é dado de
+   validação perdido para sempre** — as duas sessões end-to-end já queimadas não deixaram
+   registro de tokens, latência nem custo
+4. Cobertura de slides (cruzar material com transcrição) — diferencial do TCC, e é o que
+   torna o teste adversarial do §14 interpretável (ver a nota lá)
+5. Emoji injetado pelo STT — P1, contamina transcrição e métricas de forma
+6. Alucinação numérica no aterramento — P1
+7. Flag de truncamento de contexto — P2
+8. Reduzir para 2 personas — P3, decisão do autor
+9. Testes de `parse_slides`, `_normalizar`, `validar` e cálculo de métricas — P3
+10. Autenticação, antes de qualquer deploy público — bloqueante para produção
 
 ### Decidido para o TCC III, não implementar agora
 
@@ -349,7 +371,7 @@ O objetivo destas não é operacional, é o capítulo de validação. Instrument
 
 | Métrica | Fonte | Meta |
 |---|---|---|
-| Taxa de aterramento (aprovadas ÷ geradas) | `FeedbackResponse` | ≥ 80% |
+| Taxa de aterramento (aprovadas ÷ geradas) | `FeedbackResponse` | ≥ 80% — **medido: 100% (6/6), n=1 sessão** |
 | Rejeições por motivo | log de descarte | diagnóstico |
 | Latência de geração p50/p95 | `LLMCall.latencia_ms` | p95 < 12 s |
 | Latência de transcrição por minuto de áudio | `LLMCall` | < 0,25× tempo real |
@@ -359,6 +381,23 @@ O objetivo destas não é operacional, é o capítulo de validação. Instrument
 | Alucinação residual | amostra humana de 100 aprovadas | ≤ 5% |
 
 **Teste adversarial obrigatório:** enviar o PDF dos slides junto com áudio falando de
-assunto completamente diferente. O comportamento correto é aprovar poucas ou nenhuma
-pergunta. Se devolver cinco perguntas confiantes, a validação não funciona. Esse teste
-documentado vale mais no relatório que qualquer caso feliz.
+assunto completamente diferente. Esse teste documentado vale mais no relatório que qualquer
+caso feliz.
+
+**Atenção — a expectativa original deste teste estava errada, e o teste já foi executado.**
+A formulação anterior dizia que o correto seria "aprovar poucas ou nenhuma pergunta, e se
+devolver cinco perguntas confiantes a validação não funciona". Rodado de verdade (slides do
+TCC + áudio ensinando a fazer feijoada), o sistema aprovou **6 de 6**. Isso **não** é falha
+do aterramento: ele valida a pergunta contra os SLIDES, não contra a transcrição. Os slides
+não mudaram, todo `trecho_literal` existe no material, e o portão fez exatamente o que foi
+projetado para fazer.
+
+O que o teste adversarial realmente mede é a **cobertura de slides** (§13, item 4): o caso
+em que 100% do material ficou por apresentar. Sem cobertura implementada, não há o que
+reprovar. Vale registrar que a `content_analysis` detectou o descolamento sozinha — *"total
+desconexão entre o material visual e a sua exposição oral (...) para discorrer sobre uma
+receita culinária"* — ou seja, o sinal existe, só não está no campo certo do contrato.
+
+Ao implementar a cobertura, este teste vira o critério de aceite dela: o esperado passa a
+ser **cobertura próxima de zero e um alerta explícito de descolamento**, mantendo as
+perguntas ancoradas. Reexecutar e documentar as duas execuções (antes e depois) no relatório.
