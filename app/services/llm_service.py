@@ -168,7 +168,7 @@ async def generate_questions(
         temperature=settings.LLM_TEMPERATURE,
     )
 
-    payload = json.loads(response.choices[0].message.content or "{}")
+    payload = _parse_payload(response.choices[0].message.content)
     itens = payload.get("questions") or []
 
     candidatas = _parse_questions(itens)
@@ -187,6 +187,31 @@ async def generate_questions(
         perguntas_geradas=len(itens),
         perguntas_aprovadas=len(aprovadas),
     )
+
+
+def _parse_payload(content: str | None) -> dict:
+    """Converte a resposta do LLM em dicionário, sem deixar a sessão cair por isso.
+
+    `response_format=json_object` é pedido, não garantia: a resposta ainda pode vir com
+    texto antes do JSON ou truncada no limite de tokens. Deixar o `json.loads` cru aqui
+    faria o erro subir até o `except` do pipeline e marcar a sessão como FAILED — quando o
+    comportamento correto é concluir sem perguntas, preservando a transcrição e as métricas
+    de forma, que já foram calculadas e nada têm a ver com esta falha.
+    """
+    try:
+        payload = json.loads(content or "{}")
+    except json.JSONDecodeError as exc:
+        logger.warning("LLM devolveu JSON inválido (%s); nenhuma pergunta aproveitada.", exc)
+        return {}
+
+    if not isinstance(payload, dict):
+        logger.warning(
+            "LLM devolveu JSON que não é objeto (%s); nenhuma pergunta aproveitada.",
+            type(payload).__name__,
+        )
+        return {}
+
+    return payload
 
 
 def _parse_questions(itens: list) -> list[GeneratedQuestion]:
