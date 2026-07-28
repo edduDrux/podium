@@ -25,7 +25,12 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://podium:podium@localhost:5432/podium"
 
     # --- CORS (o Cliente VR em Unity não usa CORS, mas ferramentas web sim) ---
-    BACKEND_CORS_ORIGINS: list[str] = Field(default_factory=lambda: ["*"])
+    # Não usar ["*"]: o `main.py` sobe o middleware com `allow_credentials=True`, e a spec
+    # de CORS proíbe curinga junto de credenciais — o navegador rejeita a resposta e o
+    # erro aparece do lado do cliente, longe da causa. Origens explícitas sempre.
+    BACKEND_CORS_ORIGINS: list[str] = Field(
+        default_factory=lambda: ["http://localhost:3000"]
+    )
 
     # --- IA: Google Gemini (free tier) ---
     # O Gemini expõe DUAS interfaces e o PODIUM usa as duas:

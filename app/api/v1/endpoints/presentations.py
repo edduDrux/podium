@@ -12,6 +12,7 @@ from fastapi import (
     status,
 )
 from fastapi.concurrency import run_in_threadpool
+from sqlalchemy import update
 
 from app.api.deps import CurrentPresentation, DbSession
 from app.core.config import settings
@@ -204,27 +205,26 @@ async def analyze_presentation(
             detail="Nenhum áudio recebido para esta sessão.",
         )
 
+    audio_path = presentation.audio_path
     if chunks:
         # Antes de qualquer processamento: os pedaços viram um arquivo único e íntegro.
         # Roda em threadpool porque decodificar e reexportar é trabalho de CPU e
         # bloquearia o event loop — junto com ele, o polling de todas as outras sessões.
         destino = storage_service.audio_path(presentation.id, chunks[0].suffix)
         try:
-            consolidado = await run_in_threadpool(
-                audio_service.concat_chunks, chunks, destino
+            audio_path = str(
+                await run_in_threadpool(audio_service.concat_chunks, chunks, destino)
             )
         except audio_service.MixedChunkFormatsError as exc:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail=str(exc)
             ) from exc
 
-        presentation.audio_path = str(consolidado)
-
     # A duração só é confiável sobre o áudio inteiro: um chunk sozinho não diz nada
     # sobre o tamanho da apresentação.
     try:
         duration = await run_in_threadpool(
-            audio_service.get_duration_seconds, presentation.audio_path
+            audio_service.get_duration_seconds, audio_path
         )
     except Exception as exc:
         # Sem áudio legível não há nem métrica de forma nem transcrição — falhar aqui
@@ -237,15 +237,32 @@ async def analyze_presentation(
 
     _garantir_duracao_permitida(duration)
 
-    if presentation.status is PresentationStatus.PROCESSING:
+    # Controle de concorrência otimista: a condição `status != processing` viaja junto do
+    # UPDATE, então quem marca a sessão é o próprio banco, num único comando atômico.
+    # Ler o status e depois escrever deixava uma janela entre as duas operações — dois
+    # /analyze simultâneos liam `audio_received`, os dois passavam pelo guard e a análise
+    # rodava duas vezes, gastando duas chamadas de LLM e disputando o mesmo feedback.
+    marcada = await db.execute(
+        update(Presentation)
+        .where(
+            Presentation.id == presentation.id,
+            Presentation.status != PresentationStatus.PROCESSING,
+        )
+        .values(
+            status=PresentationStatus.PROCESSING,
+            error_message=None,
+            audio_path=audio_path,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    await db.commit()
+
+    # Nenhuma linha atualizada significa que outra requisição chegou primeiro.
+    if marcada.rowcount == 0:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Esta sessão já está sendo analisada.",
         )
-
-    presentation.status = PresentationStatus.PROCESSING
-    presentation.error_message = None
-    await db.commit()
 
     background_tasks.add_task(
         analysis_service.run_pipeline_in_background, presentation.id
@@ -253,7 +270,8 @@ async def analyze_presentation(
 
     return AnalysisAcceptedResponse(
         session_id=presentation.id,
-        status=presentation.status,
+        # O objeto em memória não acompanhou o UPDATE feito direto no banco.
+        status=PresentationStatus.PROCESSING,
         poll_url=f"{settings.API_V1_PREFIX}/presentations/{presentation.id}",
     )
 

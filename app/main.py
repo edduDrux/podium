@@ -4,14 +4,22 @@ from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import update
 
 from app.api.v1.router import api_router
 from app.core.config import settings
-from app.core.database import engine
+from app.core.database import AsyncSessionLocal, engine
+from app.core.enums import PresentationStatus
+from app.models.presentation import Presentation
 from app.services import storage_service
 
 logging.basicConfig(level=logging.DEBUG if settings.DEBUG else logging.INFO)
 logger = logging.getLogger(__name__)
+
+INTERROMPIDA_POR_REINICIO = (
+    "Análise interrompida pelo reinício do servidor. Chame /analyze novamente para "
+    "reprocessar esta sessão."
+)
 
 
 async def _storage_janitor() -> None:
@@ -27,9 +35,45 @@ async def _storage_janitor() -> None:
         await asyncio.sleep(interval)
 
 
+async def _reconciliar_sessoes_interrompidas() -> None:
+    """Marca como `failed` as sessões que ficaram presas em `processing`.
+
+    A análise roda em `BackgroundTasks`, dentro do processo: se ele morre no meio — e com
+    `--reload` isso acontece a cada arquivo salvo em desenvolvimento —, ninguém sobrevive
+    para atualizar o status. A sessão fica `processing` para sempre e o guard de 409
+    impede qualquer retentativa, tornando-a irrecuperável.
+
+    Como nenhuma análise pode estar viva no instante em que o processo sobe, tudo que
+    estiver `processing` aqui é necessariamente resíduo de uma execução anterior.
+    """
+    async with AsyncSessionLocal() as db:
+        resultado = await db.execute(
+            update(Presentation)
+            .where(Presentation.status == PresentationStatus.PROCESSING)
+            .values(
+                status=PresentationStatus.FAILED,
+                error_message=INTERROMPIDA_POR_REINICIO,
+            )
+        )
+        await db.commit()
+
+    if resultado.rowcount:
+        logger.warning(
+            "%d sessão(ões) presa(s) em 'processing' foram reconciliadas como 'failed'.",
+            resultado.rowcount,
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.storage_path.mkdir(parents=True, exist_ok=True)
+
+    try:
+        await _reconciliar_sessoes_interrompidas()
+    except Exception:
+        # Banco indisponível na subida não deve impedir a API de servir /health.
+        logger.exception("Não foi possível reconciliar as sessões interrompidas.")
+
     janitor = asyncio.create_task(_storage_janitor())
     logger.info("%s iniciada (%s)", settings.PROJECT_NAME, settings.ENVIRONMENT)
 

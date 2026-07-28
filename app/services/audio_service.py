@@ -74,7 +74,13 @@ def concat_chunks(chunk_paths: list[Path], destination: Path) -> Path:
 
 
 def normalize_for_stt(audio_path: Path | str) -> Path:
-    """Converte o áudio bruto do VR para MP3 mono 16 kHz (formato leve para o Whisper)."""
+    """Converte o áudio bruto do VR para MP3 mono 16 kHz antes de transcrever.
+
+    A transcrição é feita pelo Gemini multimodal, que recebe o áudio inline em base64 e
+    tem limite de tamanho de requisição (`MAX_INLINE_AUDIO_MB`). Mono e 16 kHz derrubam o
+    arquivo em uma ordem de grandeza sem custo de inteligibilidade — voz falada não usa a
+    banda que se está jogando fora.
+    """
     source = Path(audio_path)
     target = source.with_name(f"{source.stem}_stt.mp3")
 
