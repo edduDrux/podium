@@ -1,9 +1,18 @@
+import logging
 from pathlib import Path
 
 from pydub import AudioSegment
 from pydub.silence import detect_silence
 
 from app.schemas.feedback import SpeechMetrics
+
+logger = logging.getLogger(__name__)
+
+# Nome do formato que o FFmpeg espera na exportação, quando difere da extensão.
+EXPORT_FORMAT_BY_SUFFIX = {
+    ".m4a": "ipod",
+    ".aac": "adts",
+}
 
 # Uma pausa relevante na oratória: silêncio acima de 700 ms.
 MIN_PAUSE_MS = 700
@@ -18,6 +27,50 @@ def load(audio_path: Path | str) -> AudioSegment:
 
 def get_duration_seconds(audio_path: Path | str) -> float:
     return len(load(audio_path)) / 1000.0
+
+
+class MixedChunkFormatsError(ValueError):
+    """Chunks da mesma sessão chegaram em formatos diferentes.
+
+    Erro do cliente, não do servidor: emendar formatos distintos até seria possível
+    tecnicamente, mas indica que o VR trocou de codec no meio da gravação — e o áudio
+    resultante não representaria mais uma fala contínua.
+    """
+
+
+def concat_chunks(chunk_paths: list[Path], destination: Path) -> Path:
+    """Une os chunks recebidos em um único arquivo íntegro.
+
+    Decodifica cada pedaço e reexporta o conjunto em vez de emendar bytes: assim o
+    arquivo final tem UM cabeçalho, coerente com o conteúdo que ele descreve. É essa
+    integridade que faz a duração ser lida corretamente — e a duração é a base de todas
+    as métricas de forma.
+    """
+    if not chunk_paths:
+        raise ValueError("Nenhum chunk de áudio para unir.")
+
+    formatos = sorted({caminho.suffix.lower() for caminho in chunk_paths})
+    if len(formatos) > 1:
+        raise MixedChunkFormatsError(
+            f"Os chunks de áudio chegaram em formatos diferentes ({', '.join(formatos)}). "
+            "Envie todos os pedaços de uma sessão no mesmo formato."
+        )
+
+    combinado = AudioSegment.empty()
+    for caminho in chunk_paths:
+        combinado += AudioSegment.from_file(str(caminho))
+
+    suffix = formatos[0]
+    combinado.export(
+        destination, format=EXPORT_FORMAT_BY_SUFFIX.get(suffix, suffix.lstrip("."))
+    )
+    logger.info(
+        "Áudio remontado a partir de %d chunk(s): %s (%.1f s).",
+        len(chunk_paths),
+        destination.name,
+        len(combinado) / 1000.0,
+    )
+    return destination
 
 
 def normalize_for_stt(audio_path: Path | str) -> Path:

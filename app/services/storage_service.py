@@ -1,4 +1,5 @@
 import logging
+import re
 import shutil
 import time
 import uuid
@@ -11,6 +12,14 @@ from app.core.config import settings
 
 CHUNK_SIZE = 1024 * 1024  # 1 MB
 
+# Nome do áudio pronto para análise — o arquivo único enviado de uma vez ou o resultado
+# da junção dos chunks.
+AUDIO_STEM = "audio"
+DEFAULT_AUDIO_SUFFIX = ".mp3"
+CHUNK_NAME_RE = re.compile(r"^chunk_(\d{3,})(\.[A-Za-z0-9]+)$")
+# O sufixo vira nome de arquivo em disco: só aceitamos algo que se pareça com extensão.
+SAFE_SUFFIX_RE = re.compile(r"^\.[A-Za-z0-9]{1,8}$")
+
 logger = logging.getLogger(__name__)
 
 
@@ -21,22 +30,64 @@ def session_dir(session_id: uuid.UUID) -> Path:
     return path
 
 
+def audio_suffix(filename: str | None) -> str:
+    """Extensão do upload, preservada porque o formato importa para decodificar depois.
+
+    Cai no padrão quando o Cliente VR não manda nome de arquivo. O formato do que vem
+    pelo multipart não é confiável, então o sufixo é validado antes de virar nome em
+    disco — nome de arquivo é entrada de usuário como qualquer outra.
+    """
+    suffix = Path(filename or "").suffix.lower()
+    return suffix if SAFE_SUFFIX_RE.match(suffix) else DEFAULT_AUDIO_SUFFIX
+
+
+def audio_path(session_id: uuid.UUID, suffix: str) -> Path:
+    """Caminho do áudio único da sessão, pronto para análise."""
+    return session_dir(session_id) / f"{AUDIO_STEM}{suffix}"
+
+
+def list_audio_chunks(session_id: uuid.UUID) -> list[Path]:
+    """Chunks já recebidos, na ordem em que devem ser tocados.
+
+    A ordem vem do índice no nome, não do mtime nem da ordem do diretório: a ordem de
+    gravação em disco não é garantia de ordem de fala, e áudio remontado fora de ordem
+    é ruído com aparência de apresentação.
+    """
+    diretorio = session_dir(session_id)
+    indexados: list[tuple[int, Path]] = []
+
+    for arquivo in diretorio.iterdir():
+        match = CHUNK_NAME_RE.match(arquivo.name)
+        if match:
+            indexados.append((int(match.group(1)), arquivo))
+
+    return [caminho for _, caminho in sorted(indexados)]
+
+
+def next_chunk_path(session_id: uuid.UUID, suffix: str) -> Path:
+    """Caminho do próximo chunk, numerado na sequência do que já chegou.
+
+    Cada chunk vira um arquivo próprio em vez de ser concatenado em binário no anterior:
+    formatos com cabeçalho (WAV, entre outros) carregam metadados no início de cada
+    pedaço, e emendar os bytes deixa cabeçalho no meio do stream — o arquivo até abre,
+    mas a duração lida sai errada e contamina todas as métricas de forma.
+    """
+    return session_dir(session_id) / f"chunk_{len(list_audio_chunks(session_id)):03d}{suffix}"
+
+
 async def save_upload(
     upload: UploadFile,
     destination: Path,
     max_bytes: int | None = None,
-    append: bool = False,
 ) -> int:
     """Grava um UploadFile em disco em streaming. Retorna os bytes escritos.
 
-    `append=True` permite receber o áudio em *chunks* sucessivos do Cliente VR.
     Levanta ValueError se `max_bytes` for excedido.
     """
     destination.parent.mkdir(parents=True, exist_ok=True)
-    written = destination.stat().st_size if append and destination.exists() else 0
+    written = 0
 
-    mode = "ab" if append else "wb"
-    async with aiofiles.open(destination, mode) as out:
+    async with aiofiles.open(destination, "wb") as out:
         while chunk := await upload.read(CHUNK_SIZE):
             written += len(chunk)
             if max_bytes is not None and written > max_bytes:

@@ -1,3 +1,4 @@
+import logging
 import uuid
 from typing import Annotated
 
@@ -10,6 +11,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.concurrency import run_in_threadpool
 
 from app.api.deps import CurrentPresentation, DbSession
 from app.core.config import settings
@@ -29,7 +31,22 @@ from app.services import (
     storage_service,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/presentations", tags=["presentations"])
+
+
+def _garantir_duracao_permitida(duration: float) -> None:
+    """Recusa áudio acima do teto do MVP."""
+    max_seconds = settings.MAX_AUDIO_DURATION_MINUTES * 60
+    if duration > max_seconds:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=(
+                f"Áudio de {duration / 60:.1f} min excede o limite de "
+                f"{settings.MAX_AUDIO_DURATION_MINUTES} min do MVP."
+            ),
+        )
 
 
 @router.post(
@@ -109,31 +126,48 @@ async def upload_audio(
     presentation: CurrentPresentation,
     file: Annotated[UploadFile, File(description="Áudio da apresentação.")],
     is_chunk: Annotated[
-        bool, Form(description="True para anexar ao áudio já recebido.")
+        bool, Form(description="True para gravar como mais um pedaço da mesma fala.")
     ] = False,
 ) -> AudioUploadResponse:
-    audio_path = storage_service.session_dir(presentation.id) / "audio_raw"
-
-    received = await storage_service.save_upload(file, audio_path, append=is_chunk)
-
+    suffix = storage_service.audio_suffix(file.filename)
     duration: float | None = None
-    try:
-        duration = audio_service.get_duration_seconds(audio_path)
-    except Exception:
-        # Um chunk isolado pode não ser decodificável ainda; validamos no /analyze.
-        pass
 
-    max_seconds = settings.MAX_AUDIO_DURATION_MINUTES * 60
-    if duration is not None and duration > max_seconds:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=(
-                f"Áudio de {duration / 60:.1f} min excede o limite de "
-                f"{settings.MAX_AUDIO_DURATION_MINUTES} min do MVP."
-            ),
-        )
+    if is_chunk:
+        recebidos = storage_service.list_audio_chunks(presentation.id)
+        if recebidos and recebidos[0].suffix != suffix:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Este chunk veio em '{suffix}', mas a sessão já recebeu chunks em "
+                    f"'{recebidos[0].suffix}'. Envie todos os pedaços no mesmo formato."
+                ),
+            )
 
-    presentation.audio_path = str(audio_path)
+        destination = storage_service.next_chunk_path(presentation.id, suffix)
+        received = await storage_service.save_upload(file, destination)
+        # Chunk isolado não tem duração de sessão nem é analisável sozinho: o áudio da
+        # sessão só existe depois da junção, no /analyze — que é onde a duração é
+        # validada. Zerar `audio_path` impede que um envio anterior seja analisado
+        # no lugar dos chunks.
+        presentation.audio_path = None
+    else:
+        destination = storage_service.audio_path(presentation.id, suffix)
+        received = await storage_service.save_upload(file, destination)
+
+        try:
+            duration = audio_service.get_duration_seconds(destination)
+        except Exception:
+            logger.warning(
+                "Áudio da sessão %s não pôde ser decodificado no upload; a duração "
+                "será verificada no /analyze.",
+                presentation.id,
+            )
+
+        if duration is not None:
+            _garantir_duracao_permitida(duration)
+
+        presentation.audio_path = str(destination)
+
     presentation.status = PresentationStatus.AUDIO_RECEIVED
     await db.commit()
 
@@ -162,11 +196,46 @@ async def analyze_presentation(
     arriscaria timeout no Cliente VR. O VR acompanha pela `poll_url` até o status
     virar `completed` (ou `failed`) e então busca o feedback.
     """
-    if not presentation.audio_path:
+    chunks = storage_service.list_audio_chunks(presentation.id)
+
+    if not presentation.audio_path and not chunks:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Nenhum áudio recebido para esta sessão.",
         )
+
+    if chunks:
+        # Antes de qualquer processamento: os pedaços viram um arquivo único e íntegro.
+        # Roda em threadpool porque decodificar e reexportar é trabalho de CPU e
+        # bloquearia o event loop — junto com ele, o polling de todas as outras sessões.
+        destino = storage_service.audio_path(presentation.id, chunks[0].suffix)
+        try:
+            consolidado = await run_in_threadpool(
+                audio_service.concat_chunks, chunks, destino
+            )
+        except audio_service.MixedChunkFormatsError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+            ) from exc
+
+        presentation.audio_path = str(consolidado)
+
+    # A duração só é confiável sobre o áudio inteiro: um chunk sozinho não diz nada
+    # sobre o tamanho da apresentação.
+    try:
+        duration = await run_in_threadpool(
+            audio_service.get_duration_seconds, presentation.audio_path
+        )
+    except Exception as exc:
+        # Sem áudio legível não há nem métrica de forma nem transcrição — falhar aqui
+        # avisa o Cliente VR na hora, em vez de deixar o pipeline morrer em segundo plano.
+        logger.warning("Áudio ilegível na sessão %s: %s", presentation.id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Não foi possível decodificar o áudio enviado para esta sessão.",
+        ) from exc
+
+    _garantir_duracao_permitida(duration)
 
     if presentation.status is PresentationStatus.PROCESSING:
         raise HTTPException(
