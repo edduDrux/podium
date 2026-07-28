@@ -30,8 +30,13 @@ class GeneratedQuestion(BaseModel):
 class SpeechMetrics(BaseModel):
     """Avaliação de FORMA — derivada do áudio e da transcrição."""
 
+    # Duração real do arquivo de áudio.
     duration_seconds: float = 0.0
+    # Tempo em que a pessoa efetivamente falou (duração menos as pausas). É este, e não a
+    # duração, que serve de base ao ritmo — daí os dois campos coexistirem.
+    speech_seconds: float = 0.0
     word_count: int = 0
+    # Ritmo efetivo de fala: palavras por minuto de fala, descontado o silêncio.
     words_per_minute: float = 0.0
     pause_count: int = 0
     total_pause_seconds: float = 0.0
