@@ -1,7 +1,6 @@
 import json
 import logging
 import uuid
-from typing import NamedTuple
 
 from openai import AsyncOpenAI
 from pydantic import ValidationError
@@ -9,8 +8,10 @@ from pydantic import ValidationError
 from app.core.config import settings
 from app.core.enums import LLMCallStage, PersonaType
 from app.domain import slides
+from app.domain.banca import ResultadoGeracao
+from app.domain.ports import Auditoria
 from app.schemas.feedback import GeneratedQuestion
-from app.services import audit_service, grounding_service
+from app.services import grounding_service
 
 logger = logging.getLogger(__name__)
 
@@ -106,20 +107,6 @@ USER_PROMPT = """### SLIDES (texto extraído da apresentação)
 {transcript}"""
 
 
-class GenerationResult(NamedTuple):
-    """Resultado da geração já filtrado pelo aterramento.
-
-    Carrega as contagens junto das perguntas porque `questions` sozinho não distingue
-    "o modelo produziu pouco" de "o modelo produziu muito e quase tudo foi reprovado" —
-    e essa diferença é justamente o que se quer medir.
-    """
-
-    questions: list[GeneratedQuestion]
-    content_analysis: str
-    perguntas_geradas: int
-    perguntas_aprovadas: int
-
-
 def get_client() -> AsyncOpenAI:
     """Cliente do LLM. O Gemini é servido pelo seu endpoint compatível com OpenAI,
     então o SDK `openai` funciona apenas trocando a `base_url`."""
@@ -133,12 +120,35 @@ def get_client() -> AsyncOpenAI:
     return _client
 
 
-async def generate_questions(
+class GeminiBanca:
+    """Adaptador da `BancaExaminadora` para o endpoint compatível do Gemini.
+
+    Recebe a auditoria pela porta, então este módulo depende de HTTP e do SDK `openai`,
+    nunca do banco. Trocar de provedor é escrever outro adaptador com o mesmo método.
+    """
+
+    def __init__(self, auditoria: Auditoria) -> None:
+        self._auditoria = auditoria
+
+    async def gerar_perguntas(
+        self,
+        slides_text: str,
+        transcript: str,
+        persona: PersonaType,
+        presentation_id: uuid.UUID | None = None,
+    ) -> ResultadoGeracao:
+        return await _gerar_perguntas(
+            self._auditoria, slides_text, transcript, persona, presentation_id
+        )
+
+
+async def _gerar_perguntas(
+    auditoria: Auditoria,
     slides_text: str,
     transcript: str,
     persona: PersonaType,
     presentation_id: uuid.UUID | None = None,
-) -> GenerationResult:
+) -> ResultadoGeracao:
     """Monta o prompt (slides + transcrição + persona) e devolve as perguntas ancoradas.
 
     Só retornam perguntas que passaram pelo `grounding_service`. O prompt pede o
@@ -164,7 +174,7 @@ async def generate_questions(
         },
     ]
 
-    async with audit_service.medir(
+    async with auditoria.medir(
         presentation_id=presentation_id,
         etapa=LLMCallStage.GERACAO_PERGUNTAS,
         modelo=settings.LLM_MODEL,
@@ -191,7 +201,7 @@ async def generate_questions(
             "Aterramento: %d de %d perguntas aprovadas.", len(aprovadas), len(itens)
         )
 
-    return GenerationResult(
+    return ResultadoGeracao(
         questions=aprovadas,
         content_analysis=payload.get("content_analysis", ""),
         # Conta o que o modelo devolveu, inclusive o que veio malformado: a taxa de

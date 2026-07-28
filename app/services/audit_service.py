@@ -61,6 +61,23 @@ async def registrar(
         )
 
 
+class AuditoriaBanco:
+    """Implementação de `Auditoria` que grava em `llm_calls`.
+
+    É a única peça que conhece o banco nesta cadeia. Os adaptadores de IA recebem esta
+    instância pela porta e não sabem onde — nem se — o registro é persistido.
+    """
+
+    def medir(
+        self,
+        presentation_id: uuid.UUID | None,
+        etapa: LLMCallStage,
+        modelo: str,
+        temperatura: float,
+    ):
+        return medir(presentation_id, etapa, modelo, temperatura)
+
+
 @asynccontextmanager
 async def medir(
     presentation_id: uuid.UUID | None,

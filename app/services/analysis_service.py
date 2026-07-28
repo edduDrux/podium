@@ -11,8 +11,10 @@ from app.core.database import AsyncSessionLocal
 from app.core.enums import PresentationStatus
 from app.models.feedback import Feedback
 from app.models.presentation import Presentation
+from app.domain.banca import ResultadoGeracao
+from app.domain.ports import BancaExaminadora, Transcritor
 from app.schemas.feedback import FeedbackResponse, GeneratedQuestion, SpeechMetrics
-from app.services import audio_service, llm_service, stt_service
+from app.services import audio_service, provedores
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +55,22 @@ async def run_pipeline_in_background(session_id: uuid.UUID) -> None:
             logger.exception("Análise em segundo plano falhou (%s).", session_id)
 
 
-async def run_pipeline(db: AsyncSession, presentation: Presentation) -> FeedbackResponse:
+async def run_pipeline(
+    db: AsyncSession,
+    presentation: Presentation,
+    transcritor: Transcritor | None = None,
+    banca: BancaExaminadora | None = None,
+) -> FeedbackResponse:
     """Orquestra o Feedback Duplo: STT -> métricas de forma -> perguntas do LLM.
 
     Persiste o resultado em `feedbacks` e atualiza o status da sessão.
+
+    Os serviços externos entram por parâmetro, como portas. Em produção vêm da raiz de
+    composição; num teste, um transcritor e uma banca falsos exercitam o pipeline inteiro
+    sem rede, sem cota de IA e sem depender do humor do modelo.
     """
+    transcritor = transcritor or provedores.transcritor()
+    banca = banca or provedores.banca()
     presentation.status = PresentationStatus.PROCESSING
     presentation.error_message = None
     await db.commit()
@@ -65,7 +78,7 @@ async def run_pipeline(db: AsyncSession, presentation: Presentation) -> Feedback
     try:
         # 1. Áudio bruto do VR -> formato enxuto -> transcrição (Gemini multimodal)
         stt_ready_path = audio_service.normalize_for_stt(presentation.audio_path)
-        transcript = await stt_service.transcribe(
+        transcript = await transcritor.transcrever(
             stt_ready_path, presentation_id=presentation.id
         )
 
@@ -73,7 +86,7 @@ async def run_pipeline(db: AsyncSession, presentation: Presentation) -> Feedback
         metrics = audio_service.analyze_form(presentation.audio_path, transcript)
 
         # 3. CONTEÚDO: slides + transcrição + persona -> perguntas ancoradas da banca
-        generation = await llm_service.generate_questions(
+        generation = await banca.gerar_perguntas(
             slides_text=presentation.slides_text or "",
             transcript=transcript,
             persona=presentation.persona,
@@ -117,7 +130,7 @@ async def run_pipeline(db: AsyncSession, presentation: Presentation) -> Feedback
 
 
 def _consolidar_analise(
-    generation: llm_service.GenerationResult, session_id: uuid.UUID
+    generation: ResultadoGeracao, session_id: uuid.UUID
 ) -> str:
     """Acrescenta o aviso de banca vazia à análise textual, quando for o caso.
 

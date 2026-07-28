@@ -6,7 +6,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.enums import LLMCallStage
-from app.services import audit_service
+from app.domain.ports import Auditoria
 
 # A transcrição precisa ser fiel, não criativa.
 STT_TEMPERATURE = 0.0
@@ -37,7 +37,29 @@ def _mime_type(path: Path) -> str:
     return MIME_BY_SUFFIX.get(path.suffix.lower(), "audio/mp3")
 
 
-async def transcribe(
+class GeminiTranscritor:
+    """Adaptador do `Transcritor` para a API nativa do Gemini.
+
+    Recebe a auditoria em vez de importá-la: é o que impede este módulo — que só precisa
+    falar HTTP com o Gemini — de arrastar o SQLAlchemy junto por dependência transitiva.
+    """
+
+    def __init__(self, auditoria: Auditoria) -> None:
+        self._auditoria = auditoria
+
+    async def transcrever(
+        self,
+        audio_path: Path | str,
+        language: str = "pt",
+        presentation_id: uuid.UUID | None = None,
+    ) -> str:
+        return await _transcrever(
+            self._auditoria, audio_path, language, presentation_id
+        )
+
+
+async def _transcrever(
+    auditoria: Auditoria,
     audio_path: Path | str,
     language: str = "pt",
     presentation_id: uuid.UUID | None = None,
@@ -45,7 +67,7 @@ async def transcribe(
     """Converte o áudio da apresentação em texto via Gemini (multimodal).
 
     `presentation_id` serve só para a auditoria (`LLMCall`); omiti-lo desliga o registro
-    e mantém a função utilizável fora de uma sessão.
+    e mantém a transcrição utilizável fora de uma sessão.
     """
     path = Path(audio_path)
     audio_bytes = path.read_bytes()
@@ -81,7 +103,7 @@ async def transcribe(
         f"{settings.GEMINI_API_BASE}/models/{settings.STT_MODEL}:generateContent"
     )
 
-    async with audit_service.medir(
+    async with auditoria.medir(
         presentation_id=presentation_id,
         etapa=LLMCallStage.STT,
         modelo=settings.STT_MODEL,
