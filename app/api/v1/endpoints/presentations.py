@@ -154,6 +154,9 @@ async def upload_audio(
     else:
         destination = storage_service.audio_path(presentation.id, suffix)
         received = await storage_service.save_upload(file, destination)
+        # Um áudio inteiro substitui a sessão: chunks remanescentes de um envio anterior
+        # seriam preferidos pelo /analyze e mascarariam o arquivo recém-chegado.
+        storage_service.discard_audio_chunks(presentation.id)
 
         try:
             duration = audio_service.get_duration_seconds(destination)

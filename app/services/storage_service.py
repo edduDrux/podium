@@ -75,6 +75,31 @@ def next_chunk_path(session_id: uuid.UUID, suffix: str) -> Path:
     return session_dir(session_id) / f"chunk_{len(list_audio_chunks(session_id)):03d}{suffix}"
 
 
+def discard_audio_chunks(session_id: uuid.UUID) -> int:
+    """Descarta os chunks já recebidos. Retorna quantos foram removidos.
+
+    Chamado quando a sessão recebe um áudio inteiro: os pedaços antigos passam a ser uma
+    gravação concorrente da mesma sessão, e como o `/analyze` dá preferência aos chunks,
+    mantê-los faria a análise rodar sobre o áudio antigo ignorando o que acabou de
+    chegar — errado e silencioso.
+    """
+    removidos = 0
+    for chunk in list_audio_chunks(session_id):
+        try:
+            chunk.unlink()
+            removidos += 1
+        except OSError:
+            logger.warning("Não foi possível remover o chunk %s", chunk)
+
+    if removidos:
+        logger.info(
+            "Sessão %s recebeu áudio inteiro; %d chunk(s) anterior(es) descartado(s).",
+            session_id,
+            removidos,
+        )
+    return removidos
+
+
 async def save_upload(
     upload: UploadFile,
     destination: Path,
