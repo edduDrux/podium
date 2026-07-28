@@ -369,7 +369,16 @@ que o limiar é 90 e não 80.
 2. ~~Falha silenciosa com PDF sem texto~~ — feita
 3. ~~Auditoria `LLMCall`~~ — feita, migration `e8732f4eb5c9` aplicada
 4. Cobertura de slides (cruzar material com transcrição) — diferencial do TCC, e é o que
-   torna o teste adversarial do §14 interpretável (ver a nota lá)
+   torna o teste adversarial do §14 interpretável (ver a nota lá).
+   **Decisão em aberto, do autor, antes de escrever código:** o que conta como "slide
+   apresentado"? Ninguém fala o slide palavra por palavra, então comparar por
+   `partial_ratio` alto reprovaria quase tudo e daria cobertura artificialmente baixa. As
+   duas saídas são (a) sobreposição léxica dos termos relevantes do slide presentes na
+   transcrição — determinística e auditável, dá para mostrar o cálculo à banca, mas ruidosa
+   com palavras comuns; ou (b) pedir ao próprio LLM que marque os slides abordados —
+   entende paráfrase de verdade, mas reintroduz o modelo como juiz do próprio desempenho,
+   que é exatamente o que a camada de aterramento existe para não fazer.
+   Recomendação registrada: **(a)**, pelo mesmo motivo que justifica o aterramento.
 5. Índice de chunk de áudio pode sobrescrever fala — P1
 6. Emoji injetado pelo STT — P1, contamina transcrição e métricas de forma
 7. Alucinação numérica no aterramento — P1
