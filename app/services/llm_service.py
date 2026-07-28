@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from app.core.config import settings
 from app.core.enums import LLMCallStage, PersonaType
+from app.domain import slides
 from app.schemas.feedback import GeneratedQuestion
 from app.services import audit_service, grounding_service
 
@@ -262,12 +263,12 @@ def _aplicar_aterramento(
     perguntas: list[GeneratedQuestion], slides_text: str
 ) -> list[GeneratedQuestion]:
     """Mantém apenas as perguntas comprovadamente ancoradas em um trecho dos slides."""
-    slides = grounding_service.parse_slides(slides_text or "")
+    slides_por_numero = slides.parse(slides_text or "")
     aprovadas: list[GeneratedQuestion] = []
 
     for pergunta in perguntas:
         aprovada, motivo = grounding_service.validar(
-            pergunta, slides, settings.GROUNDING_MIN_SCORE
+            pergunta, slides_por_numero, settings.GROUNDING_MIN_SCORE
         )
         if aprovada:
             aprovadas.append(pergunta)

@@ -20,42 +20,12 @@ from rapidfuzz import fuzz
 
 from app.schemas.feedback import GeneratedQuestion
 
-# O marcador que `pdf_service` e `pptx_service` emitem — a âncora de evidência do sistema.
-# Ancorado em linha inteira (`^...$` + MULTILINE) porque o marcador só é marcador quando
-# ocupa a linha sozinho. Sem a âncora, um slide que CITE "[Slide 7]" no meio de uma frase
-# vira ponto de corte: nasce um slide fantasma e o slide real perde tudo que vinha depois
-# da citação — e aí um `trecho_literal` honesto dessa metade é reprovado como inventado.
-SLIDE_MARKER_RE = re.compile(r"^\[Slide\s+(\d+)\]$", re.MULTILINE)
 PUNCTUATION_RE = re.compile(r"[^\w\s]", re.UNICODE)
 WHITESPACE_RE = re.compile(r"\s+")
 
 # Acima deste limiar a "pergunta" é a própria frase do slide com um ponto de interrogação
 # no fim: o modelo copiou em vez de perguntar, e devolver isso à banca não avalia nada.
 MAX_QUESTION_SIMILARITY = 85
-
-
-def parse_slides(slides_text: str) -> dict[int, str]:
-    """Quebra o texto extraído nos marcadores `[Slide N]`, indexado pelo número do slide.
-
-    O número vem do marcador e não da ordem de aparição: é ele que o LLM enxerga no prompt
-    e é ele que a pergunta cita em `slide_origem`, então é por ele que a busca precisa ser
-    feita para que os dois lados falem do mesmo slide.
-    """
-    slides: dict[int, str] = {}
-    if not slides_text:
-        return slides
-
-    # Com grupo de captura, `split` devolve [texto_antes, número, conteúdo, número, ...].
-    partes = SLIDE_MARKER_RE.split(slides_text)
-    for numero, conteudo in zip(partes[1::2], partes[2::2]):
-        indice = int(numero)
-        texto = conteudo.strip()
-        anterior = slides.get(indice)
-        # Marcador repetido acumula em vez de sobrescrever: perder metade do conteúdo de um
-        # slide faria a validação reprovar trechos legítimos.
-        slides[indice] = f"{anterior}\n{texto}" if anterior else texto
-
-    return slides
 
 
 def _normalizar(texto: str) -> str:
