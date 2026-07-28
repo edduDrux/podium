@@ -37,6 +37,14 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "gemini-flash-latest"
     STT_MODEL: str = "gemini-flash-latest"
 
+    # A tarefa da banca é extrair e cobrar o que está no material, não variar
+    # criativamente — e criatividade, aqui, se manifesta como invenção.
+    LLM_TEMPERATURE: float = 0.3
+    # Similaridade mínima (0-100) entre o trecho citado pelo LLM e o texto real do slide
+    # para a pergunta ser aceita. Alto o bastante para exigir cópia, tolerante o bastante
+    # para o ruído de extração (quebras de linha, espaços, aspas tipográficas).
+    GROUNDING_MIN_SCORE: int = 90
+
     # Áudio é enviado inline (base64) ao Gemini; o limite da requisição é ~20 MB.
     MAX_INLINE_AUDIO_MB: int = 18
     AI_TIMEOUT_SECONDS: int = 300

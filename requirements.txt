@@ -28,3 +28,9 @@ aiofiles==25.1.0
 # `httpx` chama a API nativa do Gemini para a transcrição do áudio (STT).
 openai==2.48.0
 httpx==0.28.1
+# Comparação difusa entre o trecho citado pelo LLM e o texto do slide (aterramento).
+# Necessária porque a extração altera espaços/quebras: igualdade literal reprovaria
+# trechos honestos. Sem dependências transitivas.
+# 3.14.5 e não 3.10.1: a série 3.10-3.13 só publica wheel até cp313, e sem wheel cp314 o
+# pip tentaria compilar C++ dentro da imagem (que não tem toolchain).
+rapidfuzz==3.14.5
