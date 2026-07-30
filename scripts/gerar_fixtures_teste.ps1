@@ -40,11 +40,16 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $raiz = Split-Path -Parent $PSScriptRoot
-Set-Location $raiz
+# O compose e localizado por caminho em vez de por `Set-Location`: mudar o diretorio
+# corrente vazava para o shell de quem chamou o script, e nao voltava se ele abortasse no
+# meio. O project directory do Compose passa a ser o do proprio arquivo, entao o container
+# alvo continua sendo o mesmo.
+$composeFile = Join-Path $raiz 'docker-compose.yml'
 
 # --- 1. PDF, via PyMuPDF no container (o §4 diz que tudo roda no Docker) --------------
+# O caminho do script e relativo ao WORKDIR do container (/code), nao ao host.
 Write-Host 'Gerando o PDF da apresentacao...' -ForegroundColor Cyan
-docker compose exec -T api python scripts/gerar_slides_fixture.py
+docker compose -f $composeFile exec -T api python scripts/gerar_slides_fixture.py
 if ($LASTEXITCODE -ne 0) {
     throw 'Falha ao gerar o PDF. O container `api` esta de pe? (docker compose up -d)'
 }
@@ -111,6 +116,6 @@ foreach ($item in @(
 
 Write-Host ''
 Write-Host 'Fixtures prontas. Para a sessao legitima:' -ForegroundColor Yellow
-Write-Host "  .\scripts\testar_fluxo.ps1 -Pdf $Destino/tcc_slides.pdf -Audio $Destino/fala_apresentacao.wav"
+Write-Host "  .\scripts\testar_fluxo.ps1 -Apresentacao $Destino/tcc_slides.pdf -Audio $Destino/fala_apresentacao.wav"
 Write-Host 'Para o teste adversarial obrigatorio (mesmo PDF, audio fora do tema):' -ForegroundColor Yellow
-Write-Host "  .\scripts\testar_fluxo.ps1 -Pdf $Destino/tcc_slides.pdf -Audio $Destino/fala_adversarial.wav"
+Write-Host "  .\scripts\testar_fluxo.ps1 -Apresentacao $Destino/tcc_slides.pdf -Audio $Destino/fala_adversarial.wav"
