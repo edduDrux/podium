@@ -190,7 +190,7 @@ async def _gerar_perguntas(
         )
         uso.update(_extract_usage(response))
 
-    payload = _parse_payload(response.choices[0].message.content)
+    payload = _parse_payload(_extract_content(response))
     itens = payload.get("questions") or []
 
     candidatas = _parse_questions(itens)
@@ -224,6 +224,26 @@ def _extract_usage(response) -> dict[str, int | None]:
         "tokens_entrada": getattr(uso, "prompt_tokens", None),
         "tokens_saida": getattr(uso, "completion_tokens", None),
     }
+
+
+def _extract_content(response) -> str | None:
+    """Lê o texto da resposta do SDK `openai`, tolerando resposta sem escolhas.
+
+    `choices` vem vazia quando o provedor barra a própria chamada — e o texto dos slides é
+    material de terceiros, então é um caso alcançável. Indexar direto levantaria
+    `IndexError` dentro do pipeline e marcaria a sessão como FAILED, descartando a
+    transcrição e as métricas de forma que já estavam calculadas. Devolver `None` faz a
+    sessão concluir sem perguntas, que é a degradação prevista no contrato.
+    """
+    choices = getattr(response, "choices", None) or []
+    if not choices:
+        logger.warning(
+            "LLM não devolveu nenhuma escolha (resposta possivelmente bloqueada); "
+            "nenhuma pergunta aproveitada."
+        )
+        return None
+
+    return choices[0].message.content
 
 
 def _parse_payload(content: str | None) -> dict:
