@@ -23,6 +23,10 @@ from app.schemas.feedback import GeneratedQuestion
 PUNCTUATION_RE = re.compile(r"[^\w\s]", re.UNICODE)
 WHITESPACE_RE = re.compile(r"\s+")
 
+# Números com separadores internos ("1.000", "3,14") capturados inteiros, antes da
+# normalização — `_normalizar` transforma pontuação em espaço e partiria o decimal.
+NUMERO_RE = re.compile(r"\d+(?:[.,]\d+)*")
+
 # Acima deste limiar a "pergunta" é a própria frase do slide com um ponto de interrogação
 # no fim: o modelo copiou em vez de perguntar, e devolver isso à banca não avalia nada.
 MAX_QUESTION_SIMILARITY = 85
@@ -44,6 +48,21 @@ def _normalizar(texto: str) -> str:
     return WHITESPACE_RE.sub(" ", sem_pontuacao).strip()
 
 
+def _numeros(texto: str) -> set[str]:
+    """Números do texto em forma canônica: só os dígitos, sem separadores.
+
+    "1.000" e "1000" viram o mesmo token — os separadores de milhar e o estilo do
+    decimal variam entre a extração do slide e a cópia do LLM, e reprovar por isso seria
+    falso negativo cosmético, exatamente o que o aterramento promete não fazer. O preço
+    é uma colisão rara ("3,14" e "314" empatam), documentada e aceita: falso positivo
+    aqui exige coincidência de dígitos, o falso negativo aconteceria a cada decimal.
+    """
+    return {
+        numero.replace(".", "").replace(",", "")
+        for numero in NUMERO_RE.findall(texto or "")
+    }
+
+
 def validar(
     pergunta: GeneratedQuestion,
     slides: dict[int, str],
@@ -52,8 +71,8 @@ def validar(
     """Aprova a pergunta ou devolve o motivo da rejeição.
 
     O motivo é devolvido em vez de apenas `False` porque ele é o dado de auditoria: saber
-    *por que* o modelo falhou (citou slide inexistente, parafraseou, copiou a frase)
-    distingue um prompt ruim de um modelo ruim.
+    *por que* o modelo falhou (citou slide inexistente, parafraseou, alterou um número,
+    copiou a frase) distingue um prompt ruim de um modelo ruim.
     """
     conteudo = slides.get(pergunta.slide_origem)
     if conteudo is None:
@@ -66,6 +85,14 @@ def validar(
     )
     if trecho_score < min_score:
         return False, "TRECHO_NAO_LITERAL"
+
+    # Checagem à parte do score difuso, porque o score não enxerga dígito: trocar
+    # "12 participantes" por "40 participantes" num trecho copiado dá `partial_ratio`
+    # 96.2 (medido) e passa em qualquer limiar praticável. Número alterado é o erro mais
+    # perigoso diante de uma banca — a checagem é conjuntiva: o trecho precisa passar no
+    # difuso E cada número dele precisa existir literalmente no slide de origem.
+    if _numeros(pergunta.trecho_literal) - _numeros(conteudo):
+        return False, "NUMERO_NAO_ENCONTRADO"
 
     pergunta_score = fuzz.partial_ratio(
         _normalizar(pergunta.question), conteudo_normalizado
