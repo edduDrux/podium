@@ -279,38 +279,24 @@ produzem saída idêntica caractere por caractere.**
   `transcritor`/`banca` por parâmetro. O pipeline completo roda com dublês, sem rede, sem
   cota de IA.
 
-### P1 — Índice de chunk de áudio pode colidir
+### P1 resolvidos em 2026-08-05 (Fase 1 do `PRD_FASES_TCC2.md`)
 
-`storage_service.next_chunk_path` deriva o índice de `len(list_audio_chunks())`. Se um
-chunk sumir do meio (`chunk_000`, `chunk_002` presentes), `len` é 2 e o próximo caminho é
-`chunk_002` — **sobrescreve um pedaço de fala existente**. Dois uploads simultâneos de
-chunk calculam o mesmo índice pelo mesmo motivo.
-
-O sintoma é áudio remontado com um trecho faltando: nenhum erro aparece, mas a duração
-muda e contamina todas as métricas de forma. Correção: derivar do maior índice presente,
-não da contagem.
-
-### P1 — Alucinação numérica passa pelo aterramento
-
-Medido: trocar "12 participantes" por "40 participantes" dentro de um trecho copiado dá
-`partial_ratio` **96.2** e passa em qualquer limiar (80, 90 e 95). A comparação é caractere
-a caractere e um dígito quase não move o score.
-
-É o erro mais perigoso numa banca de TCC e atinge direto a meta de alucinação residual do
-§11. Mitigação possível: extrair os números do `trecho_literal` e conferir presença literal
-no slide, como checagem separada do score difuso.
-
-### P1 — O STT injeta emoji na transcrição
-
-Medido numa sessão real: transcrevendo uma fala sobre comida, o Gemini inseriu **18 emojis**
-na transcrição, vários no meio de palavras — `"na vés 🥣 pera"`, `"ceb 🥩 ola"`,
-`"a lingui 🍊 na"`. A sessão de assunto acadêmico veio com zero, então o gatilho parece ser
-o conteúdo, não o áudio.
-
-Contamina três coisas: o texto mostrado ao usuário, o `word_count`/`words_per_minute` das
-métricas de FORMA (palavra quebrada vira duas), e a medição de WER do §14 — que fica sem
-sentido se o próprio STT adiciona tokens que ninguém falou. Correção: instruir o prompt do
-`stt_service` a não acrescentar caractere não falado e/ou filtrar na saída.
+- **Índice de chunk não sobrescreve mais fala** (`storage_service.next_chunk_path`): o
+  índice vem do MAIOR presente (buraco na sequência não faz `len` regredir o contador) e o
+  caminho é reservado com criação exclusiva (`touch(exist_ok=False)`) — dois uploads
+  simultâneos que calculam o mesmo índice recebem arquivos distintos. Testado em
+  `tests/test_storage_service.py`.
+- **Emoji do STT filtrado na saída** (`stt_service.limpar_transcricao` + instrução no
+  prompt): o filtro é a garantia, o prompt reduz a frequência. Limite honesto documentado
+  no docstring: emoji cercado de espaços DENTRO de uma palavra (`"ceb 🥩 ola"`, forma
+  medida) vira `"ceb ola"` — recolar exigiria dicionário para não colar duas palavras
+  legítimas; esse caso fica a cargo do prompt. Testado com os exemplos reais medidos em
+  `tests/test_stt_service.py`.
+- **Número alterado reprova no aterramento** (`grounding_service._numeros`, motivo
+  `NUMERO_NAO_ENCONTRADO`): checagem conjuntiva ao score difuso — todo número do
+  `trecho_literal` precisa existir no slide de origem, canonizado sem separadores
+  ("1.000" ≡ "1000", para não reprovar diferença cosmética). O caso medido (12→40,
+  score 96.2) agora é reprovado. Testado em `tests/test_grounding_service.py`.
 
 ### P2 — Truncamento silencioso do contexto
 
@@ -328,7 +314,10 @@ RAG/pgvector no relatório.
 - **Divergência de limite:** o repositório documenta 15 min de áudio
   (`MAX_AUDIO_DURATION_MINUTES`, `MAX_INLINE_AUDIO_MB = 18`), a apresentação do TCC diz
   30 min. Ou ajustar o slide, ou migrar para a Files API do Gemini.
-- Sem diretório `tests/`. Sem CI, sem linter.
+- Testes: `tests/` existe (storage, filtro do STT, aterramento — 14 testes, rodam no
+  container com `docker compose exec api python -m pytest tests/`; dependências em
+  `requirements-dev.txt`). Ainda faltam: domínio `slides`, métricas de forma e
+  `run_pipeline` com dublês. Sem CI, sem linter.
 
 ---
 
@@ -398,9 +387,9 @@ que o limiar é 90 e não 80.
    entende paráfrase de verdade, mas reintroduz o modelo como juiz do próprio desempenho,
    que é exatamente o que a camada de aterramento existe para não fazer.
    Recomendação registrada: **(a)**, pelo mesmo motivo que justifica o aterramento.
-5. Índice de chunk de áudio pode sobrescrever fala — P1
-6. Emoji injetado pelo STT — P1, contamina transcrição e métricas de forma
-7. Alucinação numérica no aterramento — P1
+5. ~~Índice de chunk de áudio pode sobrescrever fala~~ — feita (maior índice + reserva exclusiva)
+6. ~~Emoji injetado pelo STT~~ — feita (filtro na saída + instrução no prompt)
+7. ~~Alucinação numérica no aterramento~~ — feita (`NUMERO_NAO_ENCONTRADO`)
 8. Flag de truncamento de contexto — P2
 9. Reduzir para 2 personas — P3, decisão do autor
 10. Testes de `slides.parse`, `_normalizar`, `validar`, métricas e do `run_pipeline` com
