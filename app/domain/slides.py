@@ -30,8 +30,28 @@ _LINHAS_EM_BRANCO_RE = re.compile(r"\n{3,}")
 
 
 def bloco(numero: int, conteudo: str) -> str:
-    """Um slide no formato do contrato: marcador em linha própria, conteúdo abaixo."""
-    return f"{MARCADOR.format(numero=numero)}\n{conteudo}"
+    """Um slide no formato do contrato: marcador em linha própria, conteúdo abaixo.
+
+    O conteúdo entra neutralizado: texto extraído é DADO, e dado não pode forjar a âncora
+    de evidência do sistema.
+    """
+    return f"{MARCADOR.format(numero=numero)}\n{_neutralizar_marcadores(conteudo)}"
+
+
+def _neutralizar_marcadores(conteudo: str) -> str:
+    """Impede que o CONTEÚDO de um slide seja lido como marcador.
+
+    A âncora `^...$` resolve o marcador citado no meio de uma frase, mas não o que ocupa a
+    linha inteira — e esse caso é concreto aqui: a apresentação do próprio TCC mostra o
+    formato `[Slide N]` como exemplo, sozinho na linha. Sem tratar na emissão, nasceria um
+    slide fantasma e o slide real perderia tudo que vinha depois da citação.
+
+    Recuar um espaço basta porque o marcador legítimo é escrito por `bloco` colado no
+    início da linha, e `normalizar` colapsa espaços repetidos em um só sem nunca removê-los
+    do começo de uma linha. O texto segue legível para o LLM e idêntico ao que o
+    aterramento compara: o modelo copia do material que recebeu.
+    """
+    return MARCADOR_RE.sub(lambda achado: f" {achado.group(0)}", conteudo)
 
 
 def montar(blocos: list[str]) -> str:
