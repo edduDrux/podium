@@ -8,6 +8,7 @@ não precisa saber de qual formato o conteúdo veio.
 from pathlib import Path
 
 from app.core.enums import SourceFileType
+from app.domain import slides
 from app.services import pdf_service, pptx_service
 
 PDF_CONTENT_TYPES = {"application/pdf"}
@@ -67,5 +68,11 @@ def has_extractable_text(slides_text: str) -> bool:
     "o arquivo tem conteúdo?". Sem esta segunda pergunta o pipeline seguiria com
     `slides_text` vazio, o aterramento reprovaria tudo por falta de referência e o usuário
     receberia uma sessão sem perguntas sem nunca saber que a causa foi o arquivo.
+
+    Mede o CONTEÚDO, não a string inteira: os marcadores `[Slide N]` são emitidos por nós e
+    contá-los seria medir a própria formatação. Um PDF escaneado de cinco páginas com um
+    caractere solto em cada uma passaria pelo limiar sem ter material nenhum, e um deck
+    legítimo de um slide curto seria recusado com uma mensagem que fala de imagem.
     """
-    return len(slides_text.strip()) >= MIN_EXTRACTABLE_CHARS
+    conteudo = sum(len(texto) for texto in slides.parse(slides_text).values())
+    return conteudo >= MIN_EXTRACTABLE_CHARS
