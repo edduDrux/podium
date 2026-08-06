@@ -102,7 +102,12 @@ async def medir(
 
     try:
         yield uso
-    except Exception as exc:
+    # `BaseException`, e não `Exception`: um shutdown ou um restart do `--reload` cancela a
+    # tarefa com `CancelledError`, que não herda de `Exception`. Capturando só `Exception`,
+    # a chamada interrompida entraria em `llm_calls` como `sucesso=True` e com a latência
+    # truncada no instante do cancelamento — contaminando justamente as duas métricas que
+    # esta tabela existe para produzir.
+    except BaseException as exc:
         erro = f"{type(exc).__name__}: {exc}"
         raise
     finally:
