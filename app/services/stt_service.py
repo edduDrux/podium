@@ -1,4 +1,5 @@
 import base64
+import re
 import uuid
 from pathlib import Path
 
@@ -17,8 +18,29 @@ TRANSCRIPTION_PROMPT = (
     "Transcreva integralmente o áudio desta apresentação em {language}. "
     "Responda APENAS com a transcrição literal do que foi falado, sem comentários, "
     "sem marcações de tempo e sem identificar locutores. "
+    "Não escreva nenhum caractere que não tenha sido falado: nada de emojis, símbolos "
+    "ou decorações — apenas as palavras ditas e a pontuação da fala. Nunca interrompa "
+    "uma palavra com qualquer símbolo. "
     "Se não houver fala audível, responda com uma string vazia."
 )
+
+# Faixas de emoji e pictogramas que o Gemini já inseriu em transcrição real (medido:
+# 18 emojis numa sessão, vários no MEIO de palavras — "ceb 🥩 ola"). A instrução no
+# prompt reduz a frequência; este filtro é a garantia. Cobre os planos de pictogramas
+# do SMP, os símbolos diversos/dingbats do BMP e os invisíveis de composição (ZWJ,
+# seletores de variação, keycap) que sobrariam como lixo depois da remoção do emoji.
+EMOJI_RE = re.compile(
+    "["
+    "\\U0001F000-\\U0001FAFF"  # pictogramas: emoticons, comida, objetos, bandeiras...
+    "\\u2600-\\u27BF"          # símbolos diversos e dingbats
+    "\\u2B00-\\u2BFF"          # setas e símbolos (inclui a estrela U+2B50)
+    "\\u2300-\\u23FF"          # técnicos com cara de emoji (ampulheta, relógio)
+    "\\u200D"                  # zero-width joiner (compõe emojis; invisível sozinho)
+    "\\u20E3"                  # keycap combinante
+    "\\uFE0E\\uFE0F"           # seletores de variação
+    "]"
+)
+_ESPACOS_RE = re.compile(r"[ \t]{2,}")
 
 MIME_BY_SUFFIX = {
     ".mp3": "audio/mp3",
@@ -147,4 +169,24 @@ def _extract_text(body: dict) -> str:
         raise RuntimeError(f"Gemini não retornou transcrição. Detalhe: {feedback}")
 
     parts = candidates[0].get("content", {}).get("parts") or []
-    return "".join(part.get("text", "") for part in parts).strip()
+    return limpar_transcricao("".join(part.get("text", "") for part in parts))
+
+
+def limpar_transcricao(texto: str) -> str:
+    """Remove da transcrição o que ninguém falou: emojis e os espaços que eles deixam.
+
+    O prompt já proíbe, mas prompt é promessa — este filtro é a verificação, no mesmo
+    espírito do aterramento. Sem ele, o emoji contamina três coisas de uma vez: o texto
+    mostrado ao usuário, o `word_count`/WPM das métricas de forma (palavra partida vira
+    duas) e a medição de WER do §14, que perde o sentido se o próprio STT adiciona
+    tokens.
+
+    Limite honesto: emoji colado nas letras (`ceb🥩ola`) é removido e a palavra se
+    recola sozinha; emoji cercado de espaços dentro de uma palavra (`ceb 🥩 ola`,
+    forma medida na sessão real) vira `ceb ola` — recolar exigiria um dicionário para
+    distinguir esse caso de duas palavras legítimas (`feijoada 🍲 ontem`), e colar
+    palavras reais seria corromper a transcrição para melhorar uma métrica. Esse caso
+    fica a cargo da instrução no prompt.
+    """
+    sem_emoji = EMOJI_RE.sub("", texto)
+    return _ESPACOS_RE.sub(" ", sem_emoji).strip()
