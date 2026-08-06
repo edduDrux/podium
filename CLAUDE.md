@@ -203,6 +203,14 @@ produzem saída idêntica caractere por caractere.**
    `re.MULTILINE`. O `\s+` mantém tolerância a espaço extra dentro do marcador; a âncora é
    o que não pode sair.
 
+   **A âncora sozinha não fecha o caso.** Ela resolve o marcador citado no meio de uma
+   frase, mas não o que ocupa a linha inteira — e é o que a apresentação do próprio TCC faz
+   ao exibir o formato como exemplo. Por isso a defesa é na emissão: `slides.bloco` recua um
+   espaço em qualquer linha do CONTEÚDO que casaria com o marcador
+   (`_neutralizar_marcadores`). Verificado: sem isso, um slide com `[Slide 7]` em linha
+   própria produz `{1, 2, 3, 7}` e o slide real termina na citação; com isso, `{1, 2, 3}`
+   com o conteúdo inteiro. Texto extraído é dado, e dado não forja a âncora de evidência.
+
 3. **A numeração tem buracos legítimos.** `pdf_service` pula páginas sem texto (`if text:`),
    então um PDF de 5 páginas pode produzir `{1, 2, 5}`. Isso é correto — não renumerar, não
    preencher.
@@ -255,6 +263,17 @@ produzem saída idêntica caractere por caractere.**
   ausente — não levanta, e repropaga intacta a exceção de quem foi medido.
 - **Contrato do marcador centralizado** em `app/domain/slides.py`; PDF e PPTx produzem
   saída idêntica caractere por caractere para o mesmo conteúdo.
+- **Resposta do LLM sem `choices`** (`llm_service._extract_content`): o provedor barrando a
+  própria chamada devolve a lista vazia. Indexar direto marcava a sessão como FAILED e
+  jogava fora transcrição e métricas de forma já calculadas; agora conclui sem perguntas.
+- **Limiar de texto extraível mede conteúdo, não marcador** (`has_extractable_text`): contar
+  `[Slide N]` media a nossa própria formatação — um PDF escaneado de 5 páginas com um
+  caractere em cada somava 63 e passava. Verificado: passava, agora é recusado.
+- **Cancelamento não vira sucesso na auditoria** (`audit_service.medir` captura
+  `BaseException`): `CancelledError` não herda de `Exception`, então um `--reload` gravava a
+  chamada interrompida com `sucesso=True` e latência truncada, contaminando as duas métricas
+  do §14 que a tabela existe para produzir.
+- **Conteúdo não forja marcador** (`slides.bloco` + `_neutralizar_marcadores`) — ver §7.
 - **Portas e inversão de dependência** (`app/domain/ports.py` + `services/provedores.py`):
   os adaptadores de IA recebem a auditoria em vez de importá-la, e `run_pipeline` aceita
   `transcritor`/`banca` por parâmetro. O pipeline completo roda com dublês, sem rede, sem
