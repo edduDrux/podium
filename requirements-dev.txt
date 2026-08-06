@@ -1,0 +1,5 @@
+# Dependências de desenvolvimento — não entram na imagem de produção.
+# Instalar no container: docker compose exec api pip install -r requirements-dev.txt
+# Ambas puro Python (py3-none-any): sem preocupação de wheel ARM64.
+pytest==9.1.1
+pytest-asyncio==1.4.0
