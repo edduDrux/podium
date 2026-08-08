@@ -14,38 +14,19 @@ exigência de cópia, tolerando apenas esse ruído de extração.
 """
 
 import re
-import unicodedata
 
 from rapidfuzz import fuzz
 
+from app.domain.texto import normalizar as _normalizar
 from app.schemas.feedback import GeneratedQuestion
 
-PUNCTUATION_RE = re.compile(r"[^\w\s]", re.UNICODE)
-WHITESPACE_RE = re.compile(r"\s+")
-
 # Números com separadores internos ("1.000", "3,14") capturados inteiros, antes da
-# normalização — `_normalizar` transforma pontuação em espaço e partiria o decimal.
+# normalização — `normalizar` transforma pontuação em espaço e partiria o decimal.
 NUMERO_RE = re.compile(r"\d+(?:[.,]\d+)*")
 
 # Acima deste limiar a "pergunta" é a própria frase do slide com um ponto de interrogação
 # no fim: o modelo copiou em vez de perguntar, e devolver isso à banca não avalia nada.
 MAX_QUESTION_SIMILARITY = 85
-
-
-def _normalizar(texto: str) -> str:
-    """Reduz o texto ao que importa na comparação: minúsculas, sem acento, sem pontuação.
-
-    Essas diferenças são cosméticas e aparecem só por causa da extração (o PDF pode trazer
-    aspas tipográficas, o PPTx não). Mantê-las produziria falso negativo — trecho copiado
-    corretamente sendo reprovado por um travessão diferente.
-    """
-    sem_acento = "".join(
-        caractere
-        for caractere in unicodedata.normalize("NFKD", texto or "")
-        if not unicodedata.combining(caractere)
-    )
-    sem_pontuacao = PUNCTUATION_RE.sub(" ", sem_acento.lower())
-    return WHITESPACE_RE.sub(" ", sem_pontuacao).strip()
 
 
 def _numeros(texto: str) -> set[str]:
