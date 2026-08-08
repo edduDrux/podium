@@ -298,12 +298,15 @@ produzem saída idêntica caractere por caractere.**
   ("1.000" ≡ "1000", para não reprovar diferença cosmética). O caso medido (12→40,
   score 96.2) agora é reprovado. Testado em `tests/test_grounding_service.py`.
 
-### P2 — Truncamento silencioso do contexto
+### P2 resolvido em 2026-08-05 — Truncamento de contexto visível
 
-`llm_service.py:17-18`: `MAX_SLIDES_CHARS = 20000`, `MAX_TRANSCRIPT_CHARS = 30000`,
-aplicados com fatiamento nu (`[:MAX]`). Corta sem avisar ninguém. Expor um flag
-`contexto_truncado` — e é esse flag, quando começar a disparar, que justifica adotar
-RAG/pgvector no relatório.
+`llm_service._limitar_slides` corta em **fronteira de slide** (slide entra inteiro ou não
+entra — meio slide no prompt gerava falso aprovado/reprovado no aterramento) e
+`_limitar_transcricao` corta em espaço, nunca no meio de palavra. Os flags
+`slides_truncados`/`transcricao_truncada` viajam pelo `ResultadoGeracao`, saem no
+`FeedbackResponse` e persistem na chave `contexto` do JSONB `metrics` (mesmo racional do
+`GROUNDING_KEY`: sem migration). É a frequência desses flags em sessões reais que decide
+se RAG/pgvector entra no projeto. Testado em `tests/test_llm_service.py`.
 
 ### P3 — Itens menores
 
@@ -314,10 +317,10 @@ RAG/pgvector no relatório.
 - **Divergência de limite:** o repositório documenta 15 min de áudio
   (`MAX_AUDIO_DURATION_MINUTES`, `MAX_INLINE_AUDIO_MB = 18`), a apresentação do TCC diz
   30 min. Ou ajustar o slide, ou migrar para a Files API do Gemini.
-- Testes: `tests/` existe (storage, filtro do STT, aterramento — 14 testes, rodam no
-  container com `docker compose exec api python -m pytest tests/`; dependências em
-  `requirements-dev.txt`). Ainda faltam: domínio `slides`, métricas de forma e
-  `run_pipeline` com dublês. Sem CI, sem linter.
+- Testes: `tests/` existe (storage, filtro do STT, aterramento, limite de contexto —
+  19 testes, rodam no container com `docker compose exec api python -m pytest tests/`;
+  dependências em `requirements-dev.txt`). Ainda faltam: domínio `slides`, métricas de
+  forma e `run_pipeline` com dublês. Sem CI, sem linter.
 
 ---
 
@@ -390,7 +393,7 @@ que o limiar é 90 e não 80.
 5. ~~Índice de chunk de áudio pode sobrescrever fala~~ — feita (maior índice + reserva exclusiva)
 6. ~~Emoji injetado pelo STT~~ — feita (filtro na saída + instrução no prompt)
 7. ~~Alucinação numérica no aterramento~~ — feita (`NUMERO_NAO_ENCONTRADO`)
-8. Flag de truncamento de contexto — P2
+8. ~~Flag de truncamento de contexto~~ — feita (corte em fronteira de slide + flags no feedback)
 9. Reduzir para 2 personas — P3, decisão do autor
 10. Testes de `slides.parse`, `_normalizar`, `validar`, métricas e do `run_pipeline` com
     dublês — P3, agora sem depender de rede nem de Postgres graças às portas
