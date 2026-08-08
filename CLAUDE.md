@@ -42,7 +42,8 @@ simplifique o código.
 O segundo diferencial é a **cobertura de slides**: cruzar material com transcrição para
 responder "o que você preparou mas não apresentou?". Nenhuma das ferramentas do estado da
 arte analisadas (VirtualSpeech, Yoodli, Orai) faz isso, porque nenhuma ingere o material.
-Ainda não implementado.
+Implementada em 2026-08-05 (`domain/cobertura.py`); limiares ainda não calibrados com
+sessão real.
 
 ---
 
@@ -81,6 +82,8 @@ app/
   schemas/    presentation, feedback        (Pydantic — contrato da API)
   domain/     slides            contrato do marcador [Slide N]: emite E interpreta
               banca             ResultadoGeracao — vocabulário do pipeline
+              texto             normalização compartilhada (aterramento + cobertura)
+              cobertura         cobertura de slides por sobreposição léxica
               ports             Protocols: Auditoria, Transcritor, BancaExaminadora
   api/v1/endpoints/presentations.py         init / audio / analyze / status / feedback
   services/   slides_service    porta única de ingestão; despacha por formato
@@ -317,10 +320,10 @@ se RAG/pgvector entra no projeto. Testado em `tests/test_llm_service.py`.
 - **Divergência de limite:** o repositório documenta 15 min de áudio
   (`MAX_AUDIO_DURATION_MINUTES`, `MAX_INLINE_AUDIO_MB = 18`), a apresentação do TCC diz
   30 min. Ou ajustar o slide, ou migrar para a Files API do Gemini.
-- Testes: `tests/` existe (storage, filtro do STT, aterramento, limite de contexto —
-  19 testes, rodam no container com `docker compose exec api python -m pytest tests/`;
-  dependências em `requirements-dev.txt`). Ainda faltam: domínio `slides`, métricas de
-  forma e `run_pipeline` com dublês. Sem CI, sem linter.
+- Testes: `tests/` existe (storage, filtro do STT, aterramento, limite de contexto,
+  cobertura — 28 testes, rodam no container com `docker compose exec api python -m pytest
+  tests/`; dependências em `requirements-dev.txt`). Ainda faltam: domínio `slides`,
+  métricas de forma e `run_pipeline` com dublês. Sem CI, sem linter.
 
 ---
 
@@ -379,17 +382,17 @@ que o limiar é 90 e não 80.
 1. ~~Camada de aterramento~~ — feita (PR #1), limiar 90 validado em sessão real
 2. ~~Falha silenciosa com PDF sem texto~~ — feita
 3. ~~Auditoria `LLMCall`~~ — feita, migration `e8732f4eb5c9` aplicada
-4. Cobertura de slides (cruzar material com transcrição) — diferencial do TCC, e é o que
-   torna o teste adversarial do §14 interpretável (ver a nota lá).
-   **Decisão em aberto, do autor, antes de escrever código:** o que conta como "slide
-   apresentado"? Ninguém fala o slide palavra por palavra, então comparar por
-   `partial_ratio` alto reprovaria quase tudo e daria cobertura artificialmente baixa. As
-   duas saídas são (a) sobreposição léxica dos termos relevantes do slide presentes na
-   transcrição — determinística e auditável, dá para mostrar o cálculo à banca, mas ruidosa
-   com palavras comuns; ou (b) pedir ao próprio LLM que marque os slides abordados —
-   entende paráfrase de verdade, mas reintroduz o modelo como juiz do próprio desempenho,
-   que é exatamente o que a camada de aterramento existe para não fazer.
-   Recomendação registrada: **(a)**, pelo mesmo motivo que justifica o aterramento.
+4. ~~Cobertura de slides~~ — **implementada em 2026-08-05** (decisão do autor: sobreposição
+   léxica, opção (a), pelo mesmo motivo que justifica o aterramento). `domain/cobertura.py`
+   puro; bloco `slide_coverage` no `FeedbackResponse` com evidência por slide
+   (`termos_ausentes`) e `alerta_descolamento`; persistido na chave `cobertura` do JSONB
+   `metrics` (sem migration); calculado no pipeline ANTES e independente do LLM. Testes em
+   `tests/test_cobertura.py`, incluindo o adversarial sintético.
+   **Pendências desta entrega:** (1) os limiares (`COVERAGE_*` em `config.py`: 0.6 / 0.3 /
+   0.15) são os propostos no PRD e **não foram calibrados** — o banco estava vazio quando a
+   feature entrou, as duas sessões reais de 2026-07 foram purgadas; calibrar na próxima
+   sessão real. (2) O reteste adversarial de verdade (slides do TCC + áudio de feijoada,
+   critério de aceite do §14) ainda não foi reexecutado — custa cota e é decisão do autor.
 5. ~~Índice de chunk de áudio pode sobrescrever fala~~ — feita (maior índice + reserva exclusiva)
 6. ~~Emoji injetado pelo STT~~ — feita (filtro na saída + instrução no prompt)
 7. ~~Alucinação numérica no aterramento~~ — feita (`NUMERO_NAO_ENCONTRADO`)
@@ -446,3 +449,11 @@ receita culinária"* — ou seja, o sinal existe, só não está no campo certo 
 Ao implementar a cobertura, este teste vira o critério de aceite dela: o esperado passa a
 ser **cobertura próxima de zero e um alerta explícito de descolamento**, mantendo as
 perguntas ancoradas. Reexecutar e documentar as duas execuções (antes e depois) no relatório.
+
+**Estado em 2026-08-05:** a cobertura está implementada (`domain/cobertura.py`, campo
+`slide_coverage` com `alerta_descolamento` no feedback) e o cenário está coberto em
+miniatura por teste determinístico (`tests/test_cobertura.py::
+test_adversarial_material_e_fala_descolados` — cobertura 0.0, alerta ligado). A
+**reexecução real** contra o Gemini (mesmo PDF, mesmo áudio de feijoada) segue pendente:
+as sessões de 2026-07 foram purgadas do banco, então será uma sessão nova — gasta cota e
+fica a critério do autor. É ela que produz o "depois" documentável no relatório.
