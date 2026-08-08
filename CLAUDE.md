@@ -313,13 +313,20 @@ se RAG/pgvector entra no projeto. Testado em `tests/test_llm_service.py`.
 
 ### P3 — Itens menores
 
-- **Divergência de escopo:** `enums.py` tem 4 personas (`professor_rigoroso`,
-  `orientador_acolhedor`, `especialista_tecnico`, `plateia_leiga`) mas o MVP acordado tem
-  **2**, e `ScenarioType` tem só `SALA_DE_AULA`. Cada persona é superfície de prompt a
-  validar e reportar. Reduzir ao escopo avaliado.
-- **Divergência de limite:** o repositório documenta 15 min de áudio
-  (`MAX_AUDIO_DURATION_MINUTES`, `MAX_INLINE_AUDIO_MB = 18`), a apresentação do TCC diz
-  30 min. Ou ajustar o slide, ou migrar para a Files API do Gemini.
+- ~~**Divergência de escopo (personas)**~~ — resolvida em 2026-08-08: **3 personas**
+  (`professor_rigoroso`, `orientador_acolhedor`, `especialista_tecnico`), decisão do
+  autor. A `plateia_leiga` saiu do enum, do `PERSONA_BRIEFS` e do README; o tipo do
+  Postgres foi recriado na migration `f4b1c9d2e370` (o autogenerate não detecta remoção
+  de valor de ENUM, e o Postgres não tem `DROP VALUE` — o caminho é recriar o tipo e
+  reapontar a coluna). Cada uma das 3 ainda precisa de prompt validado em sessão real
+  antes de virar afirmação no relatório. `ScenarioType` segue com só `SALA_DE_AULA`, que
+  é o escopo do MVP.
+- ~~**Divergência de limite (áudio)**~~ — resolvida em 2026-08-08: **fica em 15 min**,
+  decisão do autor. Nenhuma mudança de código; o que muda é a **apresentação do TCC**,
+  que diz 30 min e precisa ser corrigida para 15. Justificativa a registrar no relatório:
+  o envio inline ao Gemini tem teto de ~20 MB (`MAX_INLINE_AUDIO_MB = 18`), apresentações
+  de TCC raramente passam de 20 min, e o Cliente VR pode enviar em chunks. Migrar para a
+  Files API do Gemini fica como gatilho do TCC III, se os testes de usabilidade pedirem.
 - Testes: `tests/` existe (storage, filtro do STT, aterramento, limite de contexto,
   cobertura — 28 testes, rodam no container com `docker compose exec api python -m pytest
   tests/`; dependências em `requirements-dev.txt`). Ainda faltam: domínio `slides`,
@@ -397,7 +404,7 @@ que o limiar é 90 e não 80.
 6. ~~Emoji injetado pelo STT~~ — feita (filtro na saída + instrução no prompt)
 7. ~~Alucinação numérica no aterramento~~ — feita (`NUMERO_NAO_ENCONTRADO`)
 8. ~~Flag de truncamento de contexto~~ — feita (corte em fronteira de slide + flags no feedback)
-9. Reduzir para 2 personas — P3, decisão do autor
+9. ~~Reduzir personas~~ — feita (3 personas; migration `f4b1c9d2e370`)
 10. Testes de `slides.parse`, `_normalizar`, `validar`, métricas e do `run_pipeline` com
     dublês — P3, agora sem depender de rede nem de Postgres graças às portas
 11. Autenticação, antes de qualquer deploy público — bloqueante para produção
