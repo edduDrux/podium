@@ -7,13 +7,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from pydantic import ValidationError
 
+from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.enums import PresentationStatus
 from app.models.feedback import Feedback
 from app.models.presentation import Presentation
+from app.domain import cobertura, slides
 from app.domain.banca import ResultadoGeracao
 from app.domain.ports import BancaExaminadora, Transcritor
-from app.schemas.feedback import FeedbackResponse, GeneratedQuestion, SpeechMetrics
+from app.schemas.feedback import (
+    FeedbackResponse,
+    GeneratedQuestion,
+    SlideCoverage,
+    SlideCoverageReport,
+    SpeechMetrics,
+)
 from app.services import audio_service, provedores
 
 logger = logging.getLogger(__name__)
@@ -25,6 +33,8 @@ GROUNDING_KEY = "aterramento"
 # Mesmo racional para os flags de truncamento de contexto: chave própria no JSONB
 # existente, sem migration e sem contaminar as métricas de áudio.
 CONTEXT_KEY = "contexto"
+# E para a cobertura de slides: o relatório inteiro mora na sua chave do JSONB.
+COVERAGE_KEY = "cobertura"
 
 SEM_PERGUNTAS_ANCORADAS = (
     "Nenhuma das perguntas formuladas pôde ser ancorada em um trecho literal dos slides, "
@@ -88,6 +98,11 @@ async def run_pipeline(
         # 2. FORMA: ritmo e pausas
         metrics = audio_service.analyze_form(presentation.audio_path, transcript)
 
+        # 2.5 COBERTURA: material × transcrição, ANTES e independente do LLM — se a
+        # banca degradar para zero perguntas, a resposta a "o que ficou por apresentar?"
+        # continua saindo (mesmo princípio das métricas de forma).
+        coverage = _avaliar_cobertura(presentation, transcript)
+
         # 3. CONTEÚDO: slides + transcrição + persona -> perguntas ancoradas da banca
         generation = await banca.gerar_perguntas(
             slides_text=presentation.slides_text or "",
@@ -112,6 +127,7 @@ async def run_pipeline(
                 "slides_truncados": generation.slides_truncados,
                 "transcricao_truncada": generation.transcricao_truncada,
             },
+            COVERAGE_KEY: coverage.model_dump(),
         }
 
         db.add(feedback)
@@ -128,6 +144,7 @@ async def run_pipeline(
             perguntas_aprovadas=generation.perguntas_aprovadas,
             slides_truncados=generation.slides_truncados,
             transcricao_truncada=generation.transcricao_truncada,
+            slide_coverage=coverage,
         )
 
     except Exception as exc:
@@ -136,6 +153,38 @@ async def run_pipeline(
         presentation.error_message = str(exc)
         await db.commit()
         raise
+
+
+def _avaliar_cobertura(
+    presentation: Presentation, transcript: str
+) -> SlideCoverageReport:
+    """Executa o domínio da cobertura e converte para o contrato da API.
+
+    A raiz de composição é aqui: o domínio recebe os limiares por parâmetro e não sabe
+    que existe um `settings`.
+    """
+    resultado = cobertura.avaliar(
+        slides.parse(presentation.slides_text or ""),
+        transcript,
+        limiar_apresentado=settings.COVERAGE_FULL_THRESHOLD,
+        limiar_parcial=settings.COVERAGE_PARTIAL_THRESHOLD,
+        limiar_alerta=settings.COVERAGE_ALERT_THRESHOLD,
+    )
+
+    if resultado.alerta_descolamento:
+        logger.warning(
+            "Sessão %s: descolamento entre material e fala — cobertura de %.1f%%.",
+            presentation.id,
+            resultado.percentual_coberto * 100,
+        )
+
+    return SlideCoverageReport(
+        slides=[
+            SlideCoverage(**avaliacao._asdict()) for avaliacao in resultado.slides
+        ],
+        percentual_coberto=resultado.percentual_coberto,
+        alerta_descolamento=resultado.alerta_descolamento,
+    )
 
 
 def _consolidar_analise(
@@ -171,6 +220,7 @@ def to_response(presentation: Presentation) -> FeedbackResponse:
     metrics_data = dict(feedback.metrics or {})
     aterramento = metrics_data.pop(GROUNDING_KEY, {}) or {}
     contexto = metrics_data.pop(CONTEXT_KEY, {}) or {}
+    cobertura_gravada = metrics_data.pop(COVERAGE_KEY, None)
     questions = _questions_persistidas(feedback.questions, presentation.id)
 
     return FeedbackResponse(
@@ -187,7 +237,29 @@ def to_response(presentation: Presentation) -> FeedbackResponse:
         # honesto do que se sabe dele.
         slides_truncados=contexto.get("slides_truncados", False),
         transcricao_truncada=contexto.get("transcricao_truncada", False),
+        slide_coverage=_cobertura_persistida(cobertura_gravada, presentation.id),
     )
+
+
+def _cobertura_persistida(
+    dados: Any, session_id: uuid.UUID
+) -> SlideCoverageReport | None:
+    """Reconstrói o relatório de cobertura gravado, tolerando o que não couber no contrato.
+
+    `None` para feedback anterior à cobertura — ausência de medição não é medição
+    zerada, e o Cliente VR precisa distinguir as duas.
+    """
+    if not dados:
+        return None
+    try:
+        return SlideCoverageReport(**dados)
+    except (ValidationError, TypeError):
+        logger.warning(
+            "Cobertura persistida da sessão %s é incompatível com o contrato atual "
+            "e foi omitida.",
+            session_id,
+        )
+        return None
 
 
 def _questions_persistidas(

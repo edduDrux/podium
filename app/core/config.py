@@ -54,6 +54,16 @@ class Settings(BaseSettings):
     MAX_INLINE_AUDIO_MB: int = 18
     AI_TIMEOUT_SECONDS: int = 300
 
+    # --- Cobertura de slides (sobreposição léxica material × transcrição) ---
+    # Ninguém fala o slide palavra por palavra, então os limiares são deliberadamente
+    # baixos. Valores iniciais do PRD Fase 3 — calibrar com sessões reais antes de
+    # fixar no relatório.
+    COVERAGE_FULL_THRESHOLD: float = 0.6      # score >= : slide apresentado
+    COVERAGE_PARTIAL_THRESHOLD: float = 0.3   # score >= : parcialmente apresentado
+    # Cobertura global abaixo disto liga o alerta de descolamento entre material e
+    # fala — o campo que o teste adversarial do §14 mede.
+    COVERAGE_ALERT_THRESHOLD: float = 0.15
+
     # --- Armazenamento temporário dos uploads do Cliente VR ---
     STORAGE_DIR: str = "storage"
     MAX_UPLOAD_SIZE_MB: int = 25

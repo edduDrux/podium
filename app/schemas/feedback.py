@@ -27,6 +27,36 @@ class GeneratedQuestion(BaseModel):
     )
 
 
+class SlideCoverage(BaseModel):
+    """Veredicto de cobertura de UM slide, com a evidência que o sustenta."""
+
+    numero: int
+    # apresentado | parcial | nao_apresentado | sem_termos
+    classificacao: str
+    # None quando o slide não tem termos mensuráveis (sem_termos).
+    score: float | None = None
+    termos_totais: int = 0
+    termos_presentes: int = 0
+    # O que estava no material e não apareceu na fala — a resposta auditável a
+    # "o que você preparou mas não apresentou?".
+    termos_ausentes: list[str] = Field(default_factory=list)
+
+
+class SlideCoverageReport(BaseModel):
+    """Cruzamento material × transcrição — o diferencial do PODIUM sobre o estado da arte.
+
+    Calculado por sobreposição léxica determinística, nunca pelo LLM: o modelo não é
+    juiz do próprio desempenho (mesmo princípio do aterramento).
+    """
+
+    slides: list[SlideCoverage] = Field(default_factory=list)
+    # Termos presentes ÷ termos totais, agregado de todos os slides.
+    percentual_coberto: float = 0.0
+    # Material e fala descolados (o caso do teste adversarial: 100% do material ficou
+    # por apresentar).
+    alerta_descolamento: bool = False
+
+
 class SpeechMetrics(BaseModel):
     """Avaliação de FORMA — derivada do áudio e da transcrição."""
 
@@ -66,6 +96,10 @@ class FeedbackResponse(BaseModel):
     # dispensando) RAG no projeto.
     slides_truncados: bool = False
     transcricao_truncada: bool = False
+
+    # None em feedback anterior à cobertura de slides — ausência de medição não é
+    # medição zerada.
+    slide_coverage: SlideCoverageReport | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property
