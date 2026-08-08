@@ -37,10 +37,6 @@ PERSONA_BRIEFS: dict[PersonaType, str] = {
         "um especialista técnico da área, que sonda detalhes de implementação, "
         "limitações e decisões de projeto."
     ),
-    PersonaType.PLATEIA_LEIGA: (
-        "um membro leigo da plateia, que pede explicações simples, analogias e "
-        "questiona a aplicação prática do trabalho."
-    ),
 }
 
 SYSTEM_PROMPT = """Você compõe a banca avaliadora de uma apresentação acadêmica \

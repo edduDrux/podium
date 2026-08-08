@@ -110,7 +110,7 @@ Chamar `/analyze` de novo enquanto está `processing` devolve `409`.
 
 ### Personas disponíveis
 
-`professor_rigoroso` · `orientador_acolhedor` · `especialista_tecnico` · `plateia_leiga`
+`professor_rigoroso` · `orientador_acolhedor` · `especialista_tecnico`
 
 ### Exemplo de fluxo
 

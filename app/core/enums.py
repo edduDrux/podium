@@ -8,12 +8,16 @@ class ScenarioType(StrEnum):
 
 
 class PersonaType(StrEnum):
-    """Persona que a banca (LLM) assume ao formular as perguntas."""
+    """Persona que a banca (LLM) assume ao formular as perguntas.
+
+    Três, e não quatro: cada persona é uma superfície de prompt que precisa ser validada
+    e reportada no TCC, e a `plateia_leiga` ficou fora do escopo avaliado (migration
+    `f4b1c9d2e370`). Reduzir o escopo é reduzir o que se promete ter medido.
+    """
 
     PROFESSOR_RIGOROSO = "professor_rigoroso"
     ORIENTADOR_ACOLHEDOR = "orientador_acolhedor"
     ESPECIALISTA_TECNICO = "especialista_tecnico"
-    PLATEIA_LEIGA = "plateia_leiga"
 
 
 class SourceFileType(StrEnum):
