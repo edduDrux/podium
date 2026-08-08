@@ -22,3 +22,8 @@ class ResultadoGeracao(NamedTuple):
     content_analysis: str
     perguntas_geradas: int
     perguntas_aprovadas: int
+    # O contexto enviado ao modelo coube inteiro? Quando um destes liga, o feedback saiu
+    # de material incompleto — e é a frequência disso, medida em sessões reais, que decide
+    # se RAG/pgvector entra no projeto (CLAUDE.md §6) ou continua complexidade evitada.
+    slides_truncados: bool = False
+    transcricao_truncada: bool = False

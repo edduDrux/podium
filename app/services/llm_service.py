@@ -157,6 +157,29 @@ async def _gerar_perguntas(
 
     `presentation_id` serve só para a auditoria (`LLMCall`); omiti-lo desliga o registro.
     """
+    slides_contexto, slides_truncados = _limitar_slides(
+        slides_text or "", MAX_SLIDES_CHARS
+    )
+    transcript_contexto, transcricao_truncada = _limitar_transcricao(
+        transcript or "", MAX_TRANSCRIPT_CHARS
+    )
+
+    if slides_truncados:
+        logger.warning(
+            "Contexto de slides truncado na sessão %s: %d de %d caracteres enviados. "
+            "É este aviso, quando virar rotina, que justifica migrar para RAG.",
+            presentation_id,
+            len(slides_contexto),
+            len(slides_text or ""),
+        )
+    if transcricao_truncada:
+        logger.warning(
+            "Transcrição truncada na sessão %s: %d de %d caracteres enviados.",
+            presentation_id,
+            len(transcript_contexto),
+            len(transcript or ""),
+        )
+
     messages = [
         {
             "role": "system",
@@ -168,8 +191,8 @@ async def _gerar_perguntas(
         {
             "role": "user",
             "content": USER_PROMPT.format(
-                slides_text=(slides_text or "(sem texto extraído)")[:MAX_SLIDES_CHARS],
-                transcript=(transcript or "(sem fala capturada)")[:MAX_TRANSCRIPT_CHARS],
+                slides_text=slides_contexto or "(sem texto extraído)",
+                transcript=transcript_contexto or "(sem fala capturada)",
             ),
         },
     ]
@@ -208,7 +231,54 @@ async def _gerar_perguntas(
         # aterramento mede o rendimento real da chamada, não o do que sobreviveu ao parse.
         perguntas_geradas=len(itens),
         perguntas_aprovadas=len(aprovadas),
+        slides_truncados=slides_truncados,
+        transcricao_truncada=transcricao_truncada,
     )
+
+
+def _limitar_slides(slides_text: str, limite: int) -> tuple[str, bool]:
+    """Limita o contexto de slides SEM partir um slide no meio.
+
+    O fatiamento nu (`[:limite]`) cortava em qualquer ponto — inclusive dentro de um
+    bloco. Um slide pela metade no prompt é pior que um slide ausente: o modelo cita o
+    que viu, o aterramento valida contra o slide inteiro, e um `trecho_literal` honesto
+    da parte cortada seria aprovado — mas o inverso (pergunta sobre a metade visível com
+    trecho completado de memória) seria reprovado sem o modelo ter como saber. Slide
+    entra inteiro ou não entra.
+
+    Degenerado: um único slide maior que o limite inteiro volta ao fatiamento nu — menos
+    contexto seria contexto nenhum.
+    """
+    if len(slides_text) <= limite:
+        return slides_text, False
+
+    blocos: list[str] = []
+    total = 0
+    for numero, conteudo in sorted(slides.parse(slides_text).items()):
+        bloco = slides.bloco(numero, conteudo)
+        custo = len(bloco) + (len(slides.SEPARADOR) if blocos else 0)
+        if total + custo > limite:
+            break
+        blocos.append(bloco)
+        total += custo
+
+    if not blocos:
+        return slides_text[:limite], True
+
+    return slides.SEPARADOR.join(blocos), True
+
+
+def _limitar_transcricao(transcript: str, limite: int) -> tuple[str, bool]:
+    """Limita a transcrição cortando em espaço, não no meio de uma palavra.
+
+    Meia palavra no fim do contexto é convite para o modelo completá-la de memória —
+    exatamente a fonte de fato que o prompt proíbe.
+    """
+    if len(transcript) <= limite:
+        return transcript, False
+
+    corte = transcript.rfind(" ", 0, limite)
+    return transcript[: corte if corte > 0 else limite].rstrip(), True
 
 
 def _extract_usage(response) -> dict[str, int | None]:

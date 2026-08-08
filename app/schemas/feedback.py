@@ -60,6 +60,13 @@ class FeedbackResponse(BaseModel):
     perguntas_geradas: int = 0
     perguntas_aprovadas: int = 0
 
+    # Transparência do contexto: o material coube inteiro no prompt? Um feedback gerado
+    # sobre contexto cortado não é inválido, mas precisa se declarar — e a frequência
+    # destes flags em sessões reais é o critério registrado para adotar (ou seguir
+    # dispensando) RAG no projeto.
+    slides_truncados: bool = False
+    transcricao_truncada: bool = False
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def taxa_aterramento(self) -> float:

@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 # não existir coluna própria para elas — criar uma exigiria migration. A chave é separada
 # para que `SpeechMetrics` continue representando só o que vem do áudio.
 GROUNDING_KEY = "aterramento"
+# Mesmo racional para os flags de truncamento de contexto: chave própria no JSONB
+# existente, sem migration e sem contaminar as métricas de áudio.
+CONTEXT_KEY = "contexto"
 
 SEM_PERGUNTAS_ANCORADAS = (
     "Nenhuma das perguntas formuladas pôde ser ancorada em um trecho literal dos slides, "
@@ -105,6 +108,10 @@ async def run_pipeline(
                 "perguntas_geradas": generation.perguntas_geradas,
                 "perguntas_aprovadas": generation.perguntas_aprovadas,
             },
+            CONTEXT_KEY: {
+                "slides_truncados": generation.slides_truncados,
+                "transcricao_truncada": generation.transcricao_truncada,
+            },
         }
 
         db.add(feedback)
@@ -119,6 +126,8 @@ async def run_pipeline(
             metrics=metrics,
             perguntas_geradas=generation.perguntas_geradas,
             perguntas_aprovadas=generation.perguntas_aprovadas,
+            slides_truncados=generation.slides_truncados,
+            transcricao_truncada=generation.transcricao_truncada,
         )
 
     except Exception as exc:
@@ -161,6 +170,7 @@ def to_response(presentation: Presentation) -> FeedbackResponse:
 
     metrics_data = dict(feedback.metrics or {})
     aterramento = metrics_data.pop(GROUNDING_KEY, {}) or {}
+    contexto = metrics_data.pop(CONTEXT_KEY, {}) or {}
     questions = _questions_persistidas(feedback.questions, presentation.id)
 
     return FeedbackResponse(
@@ -173,6 +183,10 @@ def to_response(presentation: Presentation) -> FeedbackResponse:
         # o que existe no banco já são as perguntas efetivamente entregues.
         perguntas_geradas=aterramento.get("perguntas_geradas", len(questions)),
         perguntas_aprovadas=aterramento.get("perguntas_aprovadas", len(questions)),
+        # Feedback anterior a este flag não declarou truncamento; False é o registro
+        # honesto do que se sabe dele.
+        slides_truncados=contexto.get("slides_truncados", False),
+        transcricao_truncada=contexto.get("transcricao_truncada", False),
     )
 
 
