@@ -3,3 +3,6 @@
 # Ambas puro Python (py3-none-any): sem preocupação de wheel ARM64.
 pytest==9.1.1
 pytest-asyncio==1.4.0
+# Linter. Configuração em `ruff.toml`, explícita para o CI não mudar de comportamento
+# sozinho quando a versão avançar.
+ruff==0.16.2

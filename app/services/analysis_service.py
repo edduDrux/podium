@@ -2,19 +2,19 @@ import logging
 import uuid
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from pydantic import ValidationError
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.enums import PresentationStatus
-from app.models.feedback import Feedback
-from app.models.presentation import Presentation
 from app.domain import cobertura, slides
 from app.domain.banca import ResultadoGeracao
 from app.domain.ports import BancaExaminadora, Transcritor
+from app.models.feedback import Feedback
+from app.models.presentation import Presentation
 from app.schemas.feedback import (
     FeedbackResponse,
     GeneratedQuestion,
