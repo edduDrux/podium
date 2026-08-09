@@ -332,8 +332,11 @@ se RAG/pgvector entra no projeto. Testado em `tests/test_llm_service.py`.
   apontando para um banco inexistente e `GEMINI_API_KEY` vazia. Cobrem: domínio `slides`
   (as três armadilhas do §7), aterramento, cobertura, limite de contexto, storage, filtro
   do STT, métricas de forma sobre áudio sintético e o `run_pipeline` inteiro com dublês
-  nas portas. Rodar: `docker compose exec api python -m pytest tests/` (dependências em
-  `requirements-dev.txt`). Lint: `ruff check .`, configurado em `ruff.toml` com o conjunto
+  nas portas. Rodar (o `pytest` e o `ruff` NÃO estão na imagem — de propósito, para não
+  levar ferramenta de teste ao deploy; instalar uma vez por container recriado):
+  `docker compose exec api pip install -r requirements-dev.txt` e então
+  `docker compose exec api python -m pytest tests/`.
+  Lint: `ruff check .`, configurado em `ruff.toml` com o conjunto
   de regras **explícito** — o default do ruff muda entre versões e um CI que passa a
   falhar sozinho depois de um `pip install` vira ruído. CI em
   `.github/workflows/ci.yml` (lint + testes a cada push/PR; instala FFmpeg, não sobe banco).
