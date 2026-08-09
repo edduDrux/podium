@@ -327,10 +327,16 @@ se RAG/pgvector entra no projeto. Testado em `tests/test_llm_service.py`.
   o envio inline ao Gemini tem teto de ~20 MB (`MAX_INLINE_AUDIO_MB = 18`), apresentações
   de TCC raramente passam de 20 min, e o Cliente VR pode enviar em chunks. Migrar para a
   Files API do Gemini fica como gatilho do TCC III, se os testes de usabilidade pedirem.
-- Testes: `tests/` existe (storage, filtro do STT, aterramento, limite de contexto,
-  cobertura — 28 testes, rodam no container com `docker compose exec api python -m pytest
-  tests/`; dependências em `requirements-dev.txt`). Ainda faltam: domínio `slides`,
-  métricas de forma e `run_pipeline` com dublês. Sem CI, sem linter.
+- ~~**Testes, CI e linter**~~ — resolvido em 2026-08-08 (Fase 5). **49 testes**, todos sem
+  rede, sem cota de IA e sem Postgres — verificado rodando a suíte com `DATABASE_URL`
+  apontando para um banco inexistente e `GEMINI_API_KEY` vazia. Cobrem: domínio `slides`
+  (as três armadilhas do §7), aterramento, cobertura, limite de contexto, storage, filtro
+  do STT, métricas de forma sobre áudio sintético e o `run_pipeline` inteiro com dublês
+  nas portas. Rodar: `docker compose exec api python -m pytest tests/` (dependências em
+  `requirements-dev.txt`). Lint: `ruff check .`, configurado em `ruff.toml` com o conjunto
+  de regras **explícito** — o default do ruff muda entre versões e um CI que passa a
+  falhar sozinho depois de um `pip install` vira ruído. CI em
+  `.github/workflows/ci.yml` (lint + testes a cada push/PR; instala FFmpeg, não sobe banco).
 
 ---
 
@@ -405,8 +411,7 @@ que o limiar é 90 e não 80.
 7. ~~Alucinação numérica no aterramento~~ — feita (`NUMERO_NAO_ENCONTRADO`)
 8. ~~Flag de truncamento de contexto~~ — feita (corte em fronteira de slide + flags no feedback)
 9. ~~Reduzir personas~~ — feita (3 personas; migration `f4b1c9d2e370`)
-10. Testes de `slides.parse`, `_normalizar`, `validar`, métricas e do `run_pipeline` com
-    dublês — P3, agora sem depender de rede nem de Postgres graças às portas
+10. ~~Testes, linter e CI~~ — feita (49 testes sem infraestrutura, `ruff` + GitHub Actions)
 11. Autenticação, antes de qualquer deploy público — bloqueante para produção
 
 ### Decidido para o TCC III, não implementar agora
