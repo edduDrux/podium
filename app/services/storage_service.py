@@ -65,14 +65,35 @@ def list_audio_chunks(session_id: uuid.UUID) -> list[Path]:
 
 
 def next_chunk_path(session_id: uuid.UUID, suffix: str) -> Path:
-    """Caminho do próximo chunk, numerado na sequência do que já chegou.
+    """Reserva o caminho do próximo chunk, numerado na sequência do que já chegou.
 
     Cada chunk vira um arquivo próprio em vez de ser concatenado em binário no anterior:
     formatos com cabeçalho (WAV, entre outros) carregam metadados no início de cada
     pedaço, e emendar os bytes deixa cabeçalho no meio do stream — o arquivo até abre,
     mas a duração lida sai errada e contamina todas as métricas de forma.
+
+    O índice vem do MAIOR presente, não da contagem: com um buraco na sequência
+    (`chunk_000` e `chunk_002` presentes), contar dá 2 e o próximo caminho seria
+    `chunk_002` — sobrescrevendo fala já recebida, sem nenhum erro, só com a duração do
+    áudio remontado mudando. O caminho é reservado com criação exclusiva para que dois
+    uploads simultâneos, que calculam o mesmo índice, nunca recebam o mesmo arquivo: o
+    segundo detecta a colisão e avança para o índice seguinte.
     """
-    return session_dir(session_id) / f"chunk_{len(list_audio_chunks(session_id)):03d}{suffix}"
+    diretorio = session_dir(session_id)
+    indices = [
+        int(match.group(1))
+        for arquivo in diretorio.iterdir()
+        if (match := CHUNK_NAME_RE.match(arquivo.name))
+    ]
+    proximo = max(indices, default=-1) + 1
+
+    while True:
+        caminho = diretorio / f"chunk_{proximo:03d}{suffix}"
+        try:
+            caminho.touch(exist_ok=False)
+            return caminho
+        except FileExistsError:
+            proximo += 1
 
 
 def discard_audio_chunks(session_id: uuid.UUID) -> int:

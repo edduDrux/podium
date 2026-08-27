@@ -95,6 +95,22 @@ async def init_presentation(
 
     slides_text = slides_service.extract_text(file_path, file_type)
 
+    # Recusar aqui, e não deixar o aterramento reprovar tudo lá na frente: sem texto o
+    # usuário receberia uma sessão concluída e vazia, sem pista de que a causa foi o
+    # arquivo. Falhar na ingestão diz o que fazer enquanto ainda dá para reenviar.
+    if not slides_service.has_extractable_text(slides_text):
+        file_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"O arquivo {file_type.upper()} foi lido, mas quase não tem texto "
+                "extraível — as páginas parecem ser apenas imagens. A análise de conteúdo "
+                "depende do texto dos slides. Exporte a apresentação preservando a camada "
+                "de texto ('Salvar como PDF', em vez de imprimir ou digitalizar) e envie "
+                "novamente."
+            ),
+        )
+
     presentation = Presentation(
         id=session_id,
         user_id=user_id,

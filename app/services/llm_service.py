@@ -1,12 +1,15 @@
 import json
 import logging
-from typing import NamedTuple
+import uuid
 
 from openai import AsyncOpenAI
 from pydantic import ValidationError
 
 from app.core.config import settings
-from app.core.enums import PersonaType
+from app.core.enums import LLMCallStage, PersonaType
+from app.domain import slides
+from app.domain.banca import ResultadoGeracao
+from app.domain.ports import Auditoria
 from app.schemas.feedback import GeneratedQuestion
 from app.services import grounding_service
 
@@ -33,10 +36,6 @@ PERSONA_BRIEFS: dict[PersonaType, str] = {
     PersonaType.ESPECIALISTA_TECNICO: (
         "um especialista técnico da área, que sonda detalhes de implementação, "
         "limitações e decisões de projeto."
-    ),
-    PersonaType.PLATEIA_LEIGA: (
-        "um membro leigo da plateia, que pede explicações simples, analogias e "
-        "questiona a aplicação prática do trabalho."
     ),
 }
 
@@ -104,20 +103,6 @@ USER_PROMPT = """### SLIDES (texto extraído da apresentação)
 {transcript}"""
 
 
-class GenerationResult(NamedTuple):
-    """Resultado da geração já filtrado pelo aterramento.
-
-    Carrega as contagens junto das perguntas porque `questions` sozinho não distingue
-    "o modelo produziu pouco" de "o modelo produziu muito e quase tudo foi reprovado" —
-    e essa diferença é justamente o que se quer medir.
-    """
-
-    questions: list[GeneratedQuestion]
-    content_analysis: str
-    perguntas_geradas: int
-    perguntas_aprovadas: int
-
-
 def get_client() -> AsyncOpenAI:
     """Cliente do LLM. O Gemini é servido pelo seu endpoint compatível com OpenAI,
     então o SDK `openai` funciona apenas trocando a `base_url`."""
@@ -131,17 +116,66 @@ def get_client() -> AsyncOpenAI:
     return _client
 
 
-async def generate_questions(
+class GeminiBanca:
+    """Adaptador da `BancaExaminadora` para o endpoint compatível do Gemini.
+
+    Recebe a auditoria pela porta, então este módulo depende de HTTP e do SDK `openai`,
+    nunca do banco. Trocar de provedor é escrever outro adaptador com o mesmo método.
+    """
+
+    def __init__(self, auditoria: Auditoria) -> None:
+        self._auditoria = auditoria
+
+    async def gerar_perguntas(
+        self,
+        slides_text: str,
+        transcript: str,
+        persona: PersonaType,
+        presentation_id: uuid.UUID | None = None,
+    ) -> ResultadoGeracao:
+        return await _gerar_perguntas(
+            self._auditoria, slides_text, transcript, persona, presentation_id
+        )
+
+
+async def _gerar_perguntas(
+    auditoria: Auditoria,
     slides_text: str,
     transcript: str,
     persona: PersonaType,
-) -> GenerationResult:
+    presentation_id: uuid.UUID | None = None,
+) -> ResultadoGeracao:
     """Monta o prompt (slides + transcrição + persona) e devolve as perguntas ancoradas.
 
     Só retornam perguntas que passaram pelo `grounding_service`. O prompt pede o
     aterramento e a validação o cobra: pedir sem conferir deixaria a garantia por conta
     da boa vontade do modelo.
+
+    `presentation_id` serve só para a auditoria (`LLMCall`); omiti-lo desliga o registro.
     """
+    slides_contexto, slides_truncados = _limitar_slides(
+        slides_text or "", MAX_SLIDES_CHARS
+    )
+    transcript_contexto, transcricao_truncada = _limitar_transcricao(
+        transcript or "", MAX_TRANSCRIPT_CHARS
+    )
+
+    if slides_truncados:
+        logger.warning(
+            "Contexto de slides truncado na sessão %s: %d de %d caracteres enviados. "
+            "É este aviso, quando virar rotina, que justifica migrar para RAG.",
+            presentation_id,
+            len(slides_contexto),
+            len(slides_text or ""),
+        )
+    if transcricao_truncada:
+        logger.warning(
+            "Transcrição truncada na sessão %s: %d de %d caracteres enviados.",
+            presentation_id,
+            len(transcript_contexto),
+            len(transcript or ""),
+        )
+
     messages = [
         {
             "role": "system",
@@ -153,22 +187,29 @@ async def generate_questions(
         {
             "role": "user",
             "content": USER_PROMPT.format(
-                slides_text=(slides_text or "(sem texto extraído)")[:MAX_SLIDES_CHARS],
-                transcript=(transcript or "(sem fala capturada)")[:MAX_TRANSCRIPT_CHARS],
+                slides_text=slides_contexto or "(sem texto extraído)",
+                transcript=transcript_contexto or "(sem fala capturada)",
             ),
         },
     ]
 
-    response = await get_client().chat.completions.create(
-        model=settings.LLM_MODEL,
-        messages=messages,
-        response_format={"type": "json_object"},
-        # Temperatura baixa: a tarefa é extrair e cobrar o que está no material, não
-        # variar criativamente. Criatividade aqui se manifesta como invenção.
-        temperature=settings.LLM_TEMPERATURE,
-    )
+    async with auditoria.medir(
+        presentation_id=presentation_id,
+        etapa=LLMCallStage.GERACAO_PERGUNTAS,
+        modelo=settings.LLM_MODEL,
+        temperatura=settings.LLM_TEMPERATURE,
+    ) as uso:
+        response = await get_client().chat.completions.create(
+            model=settings.LLM_MODEL,
+            messages=messages,
+            response_format={"type": "json_object"},
+            # Temperatura baixa: a tarefa é extrair e cobrar o que está no material, não
+            # variar criativamente. Criatividade aqui se manifesta como invenção.
+            temperature=settings.LLM_TEMPERATURE,
+        )
+        uso.update(_extract_usage(response))
 
-    payload = json.loads(response.choices[0].message.content or "{}")
+    payload = _parse_payload(_extract_content(response))
     itens = payload.get("questions") or []
 
     candidatas = _parse_questions(itens)
@@ -179,14 +220,121 @@ async def generate_questions(
             "Aterramento: %d de %d perguntas aprovadas.", len(aprovadas), len(itens)
         )
 
-    return GenerationResult(
+    return ResultadoGeracao(
         questions=aprovadas,
         content_analysis=payload.get("content_analysis", ""),
         # Conta o que o modelo devolveu, inclusive o que veio malformado: a taxa de
         # aterramento mede o rendimento real da chamada, não o do que sobreviveu ao parse.
         perguntas_geradas=len(itens),
         perguntas_aprovadas=len(aprovadas),
+        slides_truncados=slides_truncados,
+        transcricao_truncada=transcricao_truncada,
     )
+
+
+def _limitar_slides(slides_text: str, limite: int) -> tuple[str, bool]:
+    """Limita o contexto de slides SEM partir um slide no meio.
+
+    O fatiamento nu (`[:limite]`) cortava em qualquer ponto — inclusive dentro de um
+    bloco. Um slide pela metade no prompt é pior que um slide ausente: o modelo cita o
+    que viu, o aterramento valida contra o slide inteiro, e um `trecho_literal` honesto
+    da parte cortada seria aprovado — mas o inverso (pergunta sobre a metade visível com
+    trecho completado de memória) seria reprovado sem o modelo ter como saber. Slide
+    entra inteiro ou não entra.
+
+    Degenerado: um único slide maior que o limite inteiro volta ao fatiamento nu — menos
+    contexto seria contexto nenhum.
+    """
+    if len(slides_text) <= limite:
+        return slides_text, False
+
+    blocos: list[str] = []
+    total = 0
+    for numero, conteudo in sorted(slides.parse(slides_text).items()):
+        bloco = slides.bloco(numero, conteudo)
+        custo = len(bloco) + (len(slides.SEPARADOR) if blocos else 0)
+        if total + custo > limite:
+            break
+        blocos.append(bloco)
+        total += custo
+
+    if not blocos:
+        return slides_text[:limite], True
+
+    return slides.SEPARADOR.join(blocos), True
+
+
+def _limitar_transcricao(transcript: str, limite: int) -> tuple[str, bool]:
+    """Limita a transcrição cortando em espaço, não no meio de uma palavra.
+
+    Meia palavra no fim do contexto é convite para o modelo completá-la de memória —
+    exatamente a fonte de fato que o prompt proíbe.
+    """
+    if len(transcript) <= limite:
+        return transcript, False
+
+    corte = transcript.rfind(" ", 0, limite)
+    return transcript[: corte if corte > 0 else limite].rstrip(), True
+
+
+def _extract_usage(response) -> dict[str, int | None]:
+    """Lê o consumo de tokens da resposta do SDK `openai`.
+
+    Tolerante porque o endpoint compatível do Gemini não garante preencher `usage` — e
+    perder a contagem de uma chamada não pode custar as perguntas dela.
+    """
+    uso = getattr(response, "usage", None)
+    if uso is None:
+        return {"tokens_entrada": None, "tokens_saida": None}
+    return {
+        "tokens_entrada": getattr(uso, "prompt_tokens", None),
+        "tokens_saida": getattr(uso, "completion_tokens", None),
+    }
+
+
+def _extract_content(response) -> str | None:
+    """Lê o texto da resposta do SDK `openai`, tolerando resposta sem escolhas.
+
+    `choices` vem vazia quando o provedor barra a própria chamada — e o texto dos slides é
+    material de terceiros, então é um caso alcançável. Indexar direto levantaria
+    `IndexError` dentro do pipeline e marcaria a sessão como FAILED, descartando a
+    transcrição e as métricas de forma que já estavam calculadas. Devolver `None` faz a
+    sessão concluir sem perguntas, que é a degradação prevista no contrato.
+    """
+    choices = getattr(response, "choices", None) or []
+    if not choices:
+        logger.warning(
+            "LLM não devolveu nenhuma escolha (resposta possivelmente bloqueada); "
+            "nenhuma pergunta aproveitada."
+        )
+        return None
+
+    return choices[0].message.content
+
+
+def _parse_payload(content: str | None) -> dict:
+    """Converte a resposta do LLM em dicionário, sem deixar a sessão cair por isso.
+
+    `response_format=json_object` é pedido, não garantia: a resposta ainda pode vir com
+    texto antes do JSON ou truncada no limite de tokens. Deixar o `json.loads` cru aqui
+    faria o erro subir até o `except` do pipeline e marcar a sessão como FAILED — quando o
+    comportamento correto é concluir sem perguntas, preservando a transcrição e as métricas
+    de forma, que já foram calculadas e nada têm a ver com esta falha.
+    """
+    try:
+        payload = json.loads(content or "{}")
+    except json.JSONDecodeError as exc:
+        logger.warning("LLM devolveu JSON inválido (%s); nenhuma pergunta aproveitada.", exc)
+        return {}
+
+    if not isinstance(payload, dict):
+        logger.warning(
+            "LLM devolveu JSON que não é objeto (%s); nenhuma pergunta aproveitada.",
+            type(payload).__name__,
+        )
+        return {}
+
+    return payload
 
 
 def _parse_questions(itens: list) -> list[GeneratedQuestion]:
@@ -211,12 +359,12 @@ def _aplicar_aterramento(
     perguntas: list[GeneratedQuestion], slides_text: str
 ) -> list[GeneratedQuestion]:
     """Mantém apenas as perguntas comprovadamente ancoradas em um trecho dos slides."""
-    slides = grounding_service.parse_slides(slides_text or "")
+    slides_por_numero = slides.parse(slides_text or "")
     aprovadas: list[GeneratedQuestion] = []
 
     for pergunta in perguntas:
         aprovada, motivo = grounding_service.validar(
-            pergunta, slides, settings.GROUNDING_MIN_SCORE
+            pergunta, slides_por_numero, settings.GROUNDING_MIN_SCORE
         )
         if aprovada:
             aprovadas.append(pergunta)

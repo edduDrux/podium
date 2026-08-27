@@ -1,28 +1,26 @@
-import re
 from pathlib import Path
 
 from pptx import Presentation as PptxPresentation
 
-WHITESPACE_RE = re.compile(r"[ \t]+")
-BLANKLINES_RE = re.compile(r"\n{3,}")
+from app.domain import slides
 
 
 def extract_text(pptx_path: Path | str) -> str:
     """Extrai o texto limpo de todos os slides do PPTx enviado pelo Cliente VR.
 
-    Mantém o mesmo formato de saída do `pdf_service` (`[Slide N]`), para que o
-    prompt do LLM não precise saber de qual formato o texto veio.
+    Usa o mesmo contrato do `pdf_service` (`app.domain.slides`), para que o prompt do LLM
+    e o aterramento não precisem saber de qual formato o texto veio.
     """
     presentation = PptxPresentation(str(pptx_path))
-    slides: list[str] = []
+    blocos: list[str] = []
 
     for index, slide in enumerate(presentation.slides, start=1):
         blocks = [block for shape in slide.shapes for block in _shape_text(shape)]
         content = "\n".join(block for block in blocks if block)
         if content.strip():
-            slides.append(f"[Slide {index}]\n{content.strip()}")
+            blocos.append(slides.bloco(index, content.strip()))
 
-    return _normalize("\n\n".join(slides))
+    return slides.montar(blocos)
 
 
 def _shape_text(shape) -> list[str]:
@@ -41,12 +39,6 @@ def _shape_text(shape) -> list[str]:
         return [shape.text_frame.text]
 
     return []
-
-
-def _normalize(text: str) -> str:
-    text = WHITESPACE_RE.sub(" ", text)
-    text = BLANKLINES_RE.sub("\n\n", text)
-    return text.strip()
 
 
 def is_valid_pptx(pptx_path: Path | str) -> bool:

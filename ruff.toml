@@ -1,0 +1,43 @@
+# Configuração do linter. Explícita de propósito: o conjunto de regras padrão do ruff
+# muda entre versões, e um CI que passa a falhar sozinho depois de um `pip install`
+# vira ruído que se aprende a ignorar.
+
+target-version = "py314"
+# O código escrito à mão para em 96 colunas; 100 acomoda o que existe sem afrouxar a
+# ponto de deixar passar linha realmente fugida.
+line-length = 100
+
+# Migrations são geradas pelo Alembic e revisadas por conteúdo, não por estilo —
+# reformatá-las esconderia a diferença entre o que o autogenerate propôs e o que foi
+# corrigido à mão.
+extend-exclude = ["alembic/versions"]
+
+[lint]
+# E/F: erros de sintaxe e nomes não resolvidos — o que quebra em produção.
+# I:    ordem dos imports, a única regra de estilo que o autor não quer decidir a cada arquivo.
+# UP:   sintaxe obsoleta, útil num projeto que já exige Python 3.14.
+# B:    armadilhas do bugbear (mutável como default, except sem uso da exceção).
+select = ["E", "F", "I", "UP", "B"]
+
+# `BLE001` (except Exception) fica FORA do conjunto de propósito: capturar amplo é
+# decisão de projeto aqui — o pipeline degrada sem inventar em vez de derrubar a sessão,
+# e a auditoria engole a própria falha para não levar junto quem estava sendo medido.
+# Cada um desses pontos tem docstring explicando o porquê.
+
+# `UP037` (tirar as aspas de `Mapped["Presentation"]`) fica FORA: as aspas são o idioma
+# documentado do SQLAlchemy quando a classe só é importada sob `TYPE_CHECKING`. Sem elas
+# funciona nesta versão — verificado com `configure_mappers()` e um round-trip real no
+# Postgres —, mas só porque o Python 3.14 adiou a avaliação de anotações (PEP 649).
+# Depender disso troca uma linha que se explica em uma frase por uma que exige explicar
+# uma PEP, e este código é defendido oralmente.
+ignore = ["UP037"]
+
+[lint.isort]
+# `alembic` é pacote instalado, não módulo local: sem isto o ruff o classifica como
+# primeira parte por causa do diretório `alembic/` na raiz do repositório.
+known-third-party = ["alembic"]
+
+[lint.per-file-ignores]
+# Os testes citam trechos reais medidos (transcrição com emoji, texto de slide) que não
+# podem ser reescritos para caber na coluna sem deixar de ser o dado que se mediu.
+"tests/*" = ["E501"]

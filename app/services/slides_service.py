@@ -8,6 +8,7 @@ não precisa saber de qual formato o conteúdo veio.
 from pathlib import Path
 
 from app.core.enums import SourceFileType
+from app.domain import slides
 from app.services import pdf_service, pptx_service
 
 PDF_CONTENT_TYPES = {"application/pdf"}
@@ -17,6 +18,11 @@ PPTX_CONTENT_TYPES = {
 }
 
 EXTENSION_BY_TYPE = {SourceFileType.PDF: ".pdf", SourceFileType.PPTX: ".pptx"}
+
+# Abaixo disto não há material para ancorar pergunta nenhuma. É o caso do PDF exportado
+# como imagem (slide escaneado ou "impresso"): o arquivo abre e tem páginas, então
+# `is_valid` aprova, mas a extração devolve praticamente nada.
+MIN_EXTRACTABLE_CHARS = 50
 
 
 def detect_type(filename: str | None, content_type: str | None) -> SourceFileType | None:
@@ -53,3 +59,20 @@ def extract_text(path: Path | str, file_type: SourceFileType) -> str:
     if file_type is SourceFileType.PDF:
         return pdf_service.extract_text(path)
     return pptx_service.extract_text(path)
+
+
+def has_extractable_text(slides_text: str) -> bool:
+    """O texto extraído sustenta a análise de conteúdo?
+
+    Separado de `is_valid` de propósito: aquele responde "o arquivo abre?", este responde
+    "o arquivo tem conteúdo?". Sem esta segunda pergunta o pipeline seguiria com
+    `slides_text` vazio, o aterramento reprovaria tudo por falta de referência e o usuário
+    receberia uma sessão sem perguntas sem nunca saber que a causa foi o arquivo.
+
+    Mede o CONTEÚDO, não a string inteira: os marcadores `[Slide N]` são emitidos por nós e
+    contá-los seria medir a própria formatação. Um PDF escaneado de cinco páginas com um
+    caractere solto em cada uma passaria pelo limiar sem ter material nenhum, e um deck
+    legítimo de um slide curto seria recusado com uma mensagem que fala de imagem.
+    """
+    conteudo = sum(len(texto) for texto in slides.parse(slides_text).values())
+    return conteudo >= MIN_EXTRACTABLE_CHARS

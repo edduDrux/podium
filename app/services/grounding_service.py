@@ -14,60 +14,34 @@ exigência de cópia, tolerando apenas esse ruído de extração.
 """
 
 import re
-import unicodedata
 
 from rapidfuzz import fuzz
 
+from app.domain.texto import normalizar as _normalizar
 from app.schemas.feedback import GeneratedQuestion
 
-# O marcador que `pdf_service` e `pptx_service` emitem — a âncora de evidência do sistema.
-SLIDE_MARKER_RE = re.compile(r"\[Slide\s+(\d+)\]")
-PUNCTUATION_RE = re.compile(r"[^\w\s]", re.UNICODE)
-WHITESPACE_RE = re.compile(r"\s+")
+# Números com separadores internos ("1.000", "3,14") capturados inteiros, antes da
+# normalização — `normalizar` transforma pontuação em espaço e partiria o decimal.
+NUMERO_RE = re.compile(r"\d+(?:[.,]\d+)*")
 
 # Acima deste limiar a "pergunta" é a própria frase do slide com um ponto de interrogação
 # no fim: o modelo copiou em vez de perguntar, e devolver isso à banca não avalia nada.
 MAX_QUESTION_SIMILARITY = 85
 
 
-def parse_slides(slides_text: str) -> dict[int, str]:
-    """Quebra o texto extraído nos marcadores `[Slide N]`, indexado pelo número do slide.
+def _numeros(texto: str) -> set[str]:
+    """Números do texto em forma canônica: só os dígitos, sem separadores.
 
-    O número vem do marcador e não da ordem de aparição: é ele que o LLM enxerga no prompt
-    e é ele que a pergunta cita em `slide_origem`, então é por ele que a busca precisa ser
-    feita para que os dois lados falem do mesmo slide.
+    "1.000" e "1000" viram o mesmo token — os separadores de milhar e o estilo do
+    decimal variam entre a extração do slide e a cópia do LLM, e reprovar por isso seria
+    falso negativo cosmético, exatamente o que o aterramento promete não fazer. O preço
+    é uma colisão rara ("3,14" e "314" empatam), documentada e aceita: falso positivo
+    aqui exige coincidência de dígitos, o falso negativo aconteceria a cada decimal.
     """
-    slides: dict[int, str] = {}
-    if not slides_text:
-        return slides
-
-    # Com grupo de captura, `split` devolve [texto_antes, número, conteúdo, número, ...].
-    partes = SLIDE_MARKER_RE.split(slides_text)
-    for numero, conteudo in zip(partes[1::2], partes[2::2]):
-        indice = int(numero)
-        texto = conteudo.strip()
-        anterior = slides.get(indice)
-        # Marcador repetido acumula em vez de sobrescrever: perder metade do conteúdo de um
-        # slide faria a validação reprovar trechos legítimos.
-        slides[indice] = f"{anterior}\n{texto}" if anterior else texto
-
-    return slides
-
-
-def _normalizar(texto: str) -> str:
-    """Reduz o texto ao que importa na comparação: minúsculas, sem acento, sem pontuação.
-
-    Essas diferenças são cosméticas e aparecem só por causa da extração (o PDF pode trazer
-    aspas tipográficas, o PPTx não). Mantê-las produziria falso negativo — trecho copiado
-    corretamente sendo reprovado por um travessão diferente.
-    """
-    sem_acento = "".join(
-        caractere
-        for caractere in unicodedata.normalize("NFKD", texto or "")
-        if not unicodedata.combining(caractere)
-    )
-    sem_pontuacao = PUNCTUATION_RE.sub(" ", sem_acento.lower())
-    return WHITESPACE_RE.sub(" ", sem_pontuacao).strip()
+    return {
+        numero.replace(".", "").replace(",", "")
+        for numero in NUMERO_RE.findall(texto or "")
+    }
 
 
 def validar(
@@ -78,8 +52,8 @@ def validar(
     """Aprova a pergunta ou devolve o motivo da rejeição.
 
     O motivo é devolvido em vez de apenas `False` porque ele é o dado de auditoria: saber
-    *por que* o modelo falhou (citou slide inexistente, parafraseou, copiou a frase)
-    distingue um prompt ruim de um modelo ruim.
+    *por que* o modelo falhou (citou slide inexistente, parafraseou, alterou um número,
+    copiou a frase) distingue um prompt ruim de um modelo ruim.
     """
     conteudo = slides.get(pergunta.slide_origem)
     if conteudo is None:
@@ -92,6 +66,14 @@ def validar(
     )
     if trecho_score < min_score:
         return False, "TRECHO_NAO_LITERAL"
+
+    # Checagem à parte do score difuso, porque o score não enxerga dígito: trocar
+    # "12 participantes" por "40 participantes" num trecho copiado dá `partial_ratio`
+    # 96.2 (medido) e passa em qualquer limiar praticável. Número alterado é o erro mais
+    # perigoso diante de uma banca — a checagem é conjuntiva: o trecho precisa passar no
+    # difuso E cada número dele precisa existir literalmente no slide de origem.
+    if _numeros(pergunta.trecho_literal) - _numeros(conteudo):
+        return False, "NUMERO_NAO_ENCONTRADO"
 
     pergunta_score = fuzz.partial_ratio(
         _normalizar(pergunta.question), conteudo_normalizado
