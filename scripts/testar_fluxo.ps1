@@ -6,12 +6,12 @@
     .\scripts\testar_fluxo.ps1 -Apresentacao storage\teste.pptx -Audio storage\fala_teste.wav
 
 .EXAMPLE
-    .\scripts\testar_fluxo.ps1 -Apresentacao "C:\meu_tcc.pdf" -Audio "C:\minha_fala.m4a" -Persona plateia_leiga
+    .\scripts\testar_fluxo.ps1 -Apresentacao "C:\meu_tcc.pdf" -Audio "C:\minha_fala.m4a" -Persona especialista_tecnico
 #>
 param(
     [Parameter(Mandatory = $true)][string]$Apresentacao,
     [Parameter(Mandatory = $true)][string]$Audio,
-    [ValidateSet('professor_rigoroso', 'orientador_acolhedor', 'especialista_tecnico', 'plateia_leiga')]
+    [ValidateSet('professor_rigoroso', 'orientador_acolhedor', 'especialista_tecnico')]
     [string]$Persona = 'professor_rigoroso',
     [string]$BaseUrl = 'http://localhost:8000/api/v1',
     [int]$TimeoutSegundos = 600
