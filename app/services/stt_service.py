@@ -1,4 +1,6 @@
+import asyncio
 import base64
+import logging
 import re
 import uuid
 from pathlib import Path
@@ -9,8 +11,18 @@ from app.core.config import settings
 from app.core.enums import LLMCallStage
 from app.domain.ports import Auditoria
 
+logger = logging.getLogger(__name__)
+
 # A transcrição precisa ser fiel, não criativa.
 STT_TEMPERATURE = 0.0
+
+# Só o 503 é retentado: é o Gemini declarando pico de demanda transitório ("spikes in
+# demand are usually temporary" — medido em sessão real, 2026-08-30, três análises
+# perdidas por desistir na primeira tentativa). 429 fica de fora porque cota estourada
+# não volta em segundos, e 4xx é erro nosso. Duas esperas curtas e fixas respeitam o
+# veto do CLAUDE.md §5 a retry agressivo; o LLM não precisa do equivalente — o SDK
+# `openai` já retenta 5xx sozinho, este caminho `httpx` é que não tinha nada.
+ESPERAS_APOS_503_S = (5.0, 15.0)
 
 # O Gemini não expõe um endpoint estilo Whisper (/audio/transcriptions): a transcrição
 # é feita pelo modelo multimodal, recebendo o áudio inline junto de uma instrução.
@@ -132,19 +144,42 @@ async def _transcrever(
         temperatura=STT_TEMPERATURE,
     ) as uso:
         async with httpx.AsyncClient(timeout=settings.AI_TIMEOUT_SECONDS) as client:
-            response = await client.post(
-                url,
-                json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "x-goog-api-key": settings.GEMINI_API_KEY,
-                },
-            )
-            response.raise_for_status()
+            response = await _post_com_retentativa(client, url, payload)
             body = response.json()
 
         uso.update(_extract_usage(body))
         return _extract_text(body)
+
+
+async def _post_com_retentativa(
+    client: httpx.AsyncClient, url: str, payload: dict
+) -> httpx.Response:
+    """Envia a requisição ao Gemini, retentando apenas o 503 transitório.
+
+    Qualquer outro status de erro levanta na hora (`raise_for_status`), preservando o
+    comportamento anterior; esgotadas as esperas de `ESPERAS_APOS_503_S`, o próprio 503
+    levanta e segue o caminho normal de falha — a sessão fica FAILED com a mensagem real.
+    """
+    for espera in (*ESPERAS_APOS_503_S, None):
+        response = await client.post(
+            url,
+            json=payload,
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": settings.GEMINI_API_KEY,
+            },
+        )
+        if response.status_code != 503 or espera is None:
+            response.raise_for_status()
+            return response
+
+        logger.warning(
+            "Gemini indisponível (503) na transcrição; nova tentativa em %.0f s.",
+            espera,
+        )
+        await asyncio.sleep(espera)
+
+    raise AssertionError("inalcançável: a última iteração sempre retorna ou levanta")
 
 
 def _extract_usage(body: dict) -> dict[str, int | None]:
