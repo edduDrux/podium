@@ -191,3 +191,31 @@ cobertura 1%, alerta ligado). A **reexecução real contra o Gemini** (mesmo PDF
 áudio) segue pendente: as sessões de 2026-07 foram purgadas do banco, então será uma
 sessão nova — gasta cota e fica a critério do autor. É ela que produz o "depois"
 documentável no relatório.
+
+## 8. Indisponibilidade do Gemini e troca de modelo (2026-08-30)
+
+O `gemini-flash-latest` respondeu **503 UNAVAILABLE** ("high demand") por mais de 30
+minutos contínuos — confirmado com chamada trivial de texto, sem áudio: não era o
+payload, era o provedor. Três análises reais falharam por desistir na primeira tentativa.
+
+**Duas mudanças:**
+1. **Retentativa no STT** (`stt_service._post_com_retentativa`): só o 503, duas esperas
+   fixas (5 s / 15 s), qualquer outro status levanta na hora. O LLM não precisou do
+   equivalente — o SDK `openai` já retenta 5xx sozinho; o caminho `httpx` do STT é que
+   não tinha nada. Testado com transporte falso em `tests/test_stt_service.py`.
+2. **Modelo trocado no `.env`** (não no código): `LLM_MODEL` e `STT_MODEL` de
+   `gemini-flash-latest` para **`gemini-3.5-flash`**, que respondia normalmente.
+   Exatamente a troca de configuração que a arquitetura promete.
+
+**Primeira sessão real completa com o `gemini-3.5-flash`** (PDF real do TCC, 10 slides,
+áudio de 7,3 min): aterramento **6/6 (100%)**, cobertura 82% sem alerta, sem truncamento.
+Latências: STT 124,0 s para 436,5 s de áudio (**0,284× tempo real — acima da meta de
+0,25×**; com o flash-latest era 0,061×) e geração 17,8 s (**acima da meta de p95 < 12 s**).
+**As medições da §7 valem para o `gemini-flash-latest`**: se o 3.5 for mantido, remedir
+tudo antes do relatório — ou voltar ao flash-latest quando o 503 passar, revertendo o
+`.env`.
+
+**Armadilha operacional descoberta:** `docker compose restart` NÃO relê o `.env` (o
+`env_file` aplica na criação do container) — a primeira retentativa pós-troca ainda usou
+o modelo antigo, flagrado pela coluna `modelo` da `llm_calls`. Mudou o `.env`, use
+`docker compose up -d api`.

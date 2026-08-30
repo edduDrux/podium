@@ -130,6 +130,9 @@ Tudo mora em `app/domain/slides.py` — emitir (`bloco`, `montar`), normalizar
   versões anteriores forçariam compilação C++ na imagem, que não tem toolchain.
 - **Remoção de valor de ENUM no Postgres**: não existe `DROP VALUE` e o autogenerate não
   detecta — recriar o tipo e reapontar a coluna (exemplo: `f4b1c9d2e370`).
+- **`docker compose restart` não relê o `.env`**: o `env_file` aplica na criação do
+  container. Mudou o `.env` → `docker compose up -d api` (recria). Flagrado pela coluna
+  `modelo` da `llm_calls` (2026-08-30).
 
 ## 9. Invariantes de domínio
 
