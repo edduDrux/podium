@@ -299,7 +299,8 @@ acrescentá-lo custaria ~400 MB numa imagem que roda em 1 OCPU/12 GB ARM64 (CLAU
 O `415` diz isso ao usuário com a saída ("exporte como PDF") em vez de devolver parede
 vazia.
 
-**Pendente de execução:** os testes destes dois serviços (`tests/test_transcript_service.py`,
-`tests/test_slide_render_service.py`) foram escritos mas **não rodados** — a máquina de
-desenvolvimento estava sem Docker e sem Python no dia. Rodar antes de confiar:
-`docker compose exec api python -m pytest tests/`.
+**Testes executados em 2026-09-19:** `docker compose exec api python -m pytest tests/` →
+**72 passando**, e `ruff check .` limpo. Os dois serviços novos entram com 13 testes
+(`test_transcript_service.py`, `test_slide_render_service.py`). Uma armadilha achada
+ao rodar: aberto como documento, um PNG é medido em PONTOS a 72 dpi, então uma imagem de
+400 px aparece como 300 — a verificação de tamanho tem de usar `fitz.Pixmap`.

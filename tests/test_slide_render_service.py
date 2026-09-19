@@ -45,12 +45,19 @@ def test_contar_paginas(pdf):
 
 
 def test_renderiza_png_na_largura_pedida_preservando_a_proporcao(pdf):
+    """400 px de largura numa página 4:3 dão 300 px de altura — não 16:9 esticado.
+
+    A medição é em PIXELS (`fitz.Pixmap`), e não no `rect` do documento: aberto como
+    documento, o PNG é medido em pontos a 72 dpi, e a mesma imagem de 400 px apareceria
+    como 300. O que importa aqui é a textura que vai para a parede.
+    """
     imagem = slide_render_service.renderizar_pagina(pdf, 2, 400)
 
     assert imagem.startswith(PNG_ASSINATURA)
-    with fitz.open(stream=imagem, filetype="png") as lido:
-        assert lido[0].rect.width == 400
-        assert lido[0].rect.height == 300
+
+    pixels = fitz.Pixmap(imagem)
+    assert pixels.width == 400
+    assert pixels.height == 300
 
 
 @pytest.mark.parametrize("numero", [0, 4])
