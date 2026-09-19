@@ -17,6 +17,7 @@ from app.core.enums import PersonaType, PresentationStatus
 from app.domain import slides
 from app.domain.banca import ResultadoGeracao
 from app.domain.ports import BancaExaminadora, Transcritor
+from app.models.feedback import Feedback
 from app.models.presentation import Presentation
 from app.schemas.feedback import GeneratedQuestion, SpeechMetrics
 from app.services import analysis_service, audio_service
@@ -208,3 +209,60 @@ async def test_falha_do_transcritor_marca_a_sessao_e_repropaga(presentation):
 
     assert presentation.status == PresentationStatus.FAILED
     assert "STT indisponível" in presentation.error_message
+
+
+class TranscritorEspiao:
+    """Conta as chamadas — é o que o reaproveitamento da transcrição precisa provar."""
+
+    def __init__(self, texto: str = "transcrição nova") -> None:
+        self._texto = texto
+        self.chamadas = 0
+
+    async def transcrever(self, audio_path, language="pt", presentation_id=None) -> str:
+        self.chamadas += 1
+        return self._texto
+
+
+@pytest.mark.asyncio
+async def test_reprocessar_reaproveita_a_transcricao_e_nao_chama_o_stt(presentation):
+    """O STT é a etapa mais cara e mais lenta; reprocessar não muda o que foi dito."""
+    presentation.feedback = Feedback(
+        presentation_id=presentation.id,
+        transcript="falei sobre a metodologia experimental",
+    )
+    espiao = TranscritorEspiao()
+
+    resposta = await analysis_service.run_pipeline(
+        BancoFalso(),
+        presentation,
+        espiao,
+        BancaFalsa(ResultadoGeracao([PERGUNTA], "ok", 1, 1)),
+    )
+
+    assert espiao.chamadas == 0
+    assert resposta.transcript == "falei sobre a metodologia experimental"
+    assert presentation.status == PresentationStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_transcricao_vazia_anterior_nao_e_reaproveitada(presentation):
+    """Vazio pode ser áudio sem fala ou modelo que não respondeu — repete para não confundir."""
+    presentation.feedback = Feedback(presentation_id=presentation.id, transcript="")
+    espiao = TranscritorEspiao()
+
+    await analysis_service.run_pipeline(
+        BancoFalso(), presentation, espiao, BancaFalsa(ResultadoGeracao([], "", 0, 0))
+    )
+
+    assert espiao.chamadas == 1
+
+
+@pytest.mark.asyncio
+async def test_sessao_sem_feedback_anterior_chama_o_stt(presentation):
+    espiao = TranscritorEspiao()
+
+    await analysis_service.run_pipeline(
+        BancoFalso(), presentation, espiao, BancaFalsa(ResultadoGeracao([], "", 0, 0))
+    )
+
+    assert espiao.chamadas == 1

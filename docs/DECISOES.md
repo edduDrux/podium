@@ -219,3 +219,28 @@ tudo antes do relatório — ou voltar ao flash-latest quando o 503 passar, reve
 `env_file` aplica na criação do container) — a primeira retentativa pós-troca ainda usou
 o modelo antigo, flagrado pela coluna `modelo` da `llm_calls`. Mudou o `.env`, use
 `docker compose up -d api`.
+
+## 9. Reaproveitamento da transcrição no reprocessamento (2026-09-01)
+
+**Evidência:** a sessão `d5caa4fd` tem dois registros STT idênticos em `llm_calls`
+(11.019 tokens de entrada cada; 124,0 s e 179,5 s de latência). Foi reprocessada e pagou
+a transcrição duas vezes. O STT é a etapa mais cara do pipeline (tokens proporcionais à
+duração do áudio) e a mais lenta (0,28–0,41× tempo real, medidos).
+
+**Mudança:** `run_pipeline` reaproveita `feedbacks.transcript` quando existe e não é
+vazio, pulando o STT; o endpoint `/audio` apaga a transcrição ao receber áudio novo
+(inteiro ou chunk), para que "existe" signifique "é deste áudio". Transcrição vazia não é
+reaproveitada — indistinguível, depois do fato, de resposta degenerada do modelo. Três
+testes em `tests/test_analysis_service.py` com um transcritor-espião.
+
+**Custo por apresentação de 15 min** (tokens extrapolados da sessão real; preço de tabela
+do Gemini 3.5 Flash em 2026-09, áudio a $3,00/M, texto a $1,50/M, saída a $9,00/M):
+STT ≈ $0,09–0,11, geração ≈ $0,02. Um STT dedicado (Whisper-1, $0,006/min) custaria
+≈ $0,09 pelos mesmos 15 min: **trocar o transcritor não é decisão de custo**. Se a troca
+vier, o argumento é latência — e precisa de medição própria.
+
+**Cliente VR (`podium-vr`):** primeiro fluxo completo Unity → API → Feedback Duplo em
+2026-09-01, com o `fala.wav` sintético das fixtures (tom saturado, feito para testar
+pausas): transcrição vazia, 0 ppm, cobertura 0% com alerta — comportamento correto,
+"degradar sem inventar", com 6/6 perguntas ancoradas nos slides. STT 21,7 s e geração
+**50,6 s** nesta sessão; o histórico de geração com o 3.5-flash vai de 15,9 s a 86,2 s.

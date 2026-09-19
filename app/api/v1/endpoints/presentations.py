@@ -188,6 +188,12 @@ async def upload_audio(
 
         presentation.audio_path = str(destination)
 
+    # A transcrição pertence ao áudio que a gerou. Áudio novo — inteiro ou mais um chunk —
+    # invalida a anterior; sem isso o /analyze a reaproveitaria (analysis_service) e a
+    # banca perguntaria sobre uma fala que não é mais esta.
+    if presentation.feedback is not None:
+        presentation.feedback.transcript = None
+
     presentation.status = PresentationStatus.AUDIO_RECEIVED
     await db.commit()
 

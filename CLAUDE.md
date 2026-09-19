@@ -34,7 +34,7 @@ python-pptx · pydub + FFmpeg · rapidfuzz · Python 3.14.
 - **STT**: o Gemini **não tem** `/audio/transcriptions` (retorna 404) — `stt_service`
   chama a API nativa `generateContent` com áudio inline base64 via `httpx`
   (`MAX_INLINE_AUDIO_MB=18`).
-- Modelo: `gemini-flash-latest`. **Não usar `gemini-2.5-flash`** — 404 para contas novas.
+- Modelo: definido no `.env` (`LLM_MODEL`/`STT_MODEL`). Desde 2026-08-30 é `gemini-3.5-flash` — o `gemini-flash-latest` falhou em 7/7 chamadas STT por 503 (DECISOES §8). **Não usar `gemini-2.5-flash`** — 404 para contas novas.
 - Chave via créditos do Google AI Pro. Claude Pro **não** inclui API.
 
 ## 3. Arquitetura
@@ -59,6 +59,8 @@ Postgres.
 **Fluxo:** `POST /init` → `POST /{id}/audio` (inteiro ou chunks) → `POST /{id}/analyze`
 (**202** + `BackgroundTasks`) → polling `GET /{id}` até `completed` → `GET /{id}/feedback`.
 A tarefa de fundo abre a **própria** sessão de banco (a do request já morreu).
+Reprocessar (`/analyze` de novo) **reaproveita a transcrição** e pula o STT; áudio novo
+no `/audio` a invalida (DECISOES §9).
 
 ## 4. Execução — tudo no Docker
 

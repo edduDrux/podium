@@ -89,11 +89,24 @@ async def run_pipeline(
     await db.commit()
 
     try:
-        # 1. Áudio bruto do VR -> formato enxuto -> transcrição (Gemini multimodal)
-        stt_ready_path = audio_service.normalize_for_stt(presentation.audio_path)
-        transcript = await transcritor.transcrever(
-            stt_ready_path, presentation_id=presentation.id
-        )
+        # 1. Transcrição — reaproveitada quando a sessão já tem uma DESTE áudio.
+        # O STT é a etapa mais cara do pipeline (tokens proporcionais à duração: 11.019
+        # para 436,5 s de áudio, medido na sessão d5caa4fd em 2026-08-30) e a mais lenta
+        # (0,28-0,41x tempo real). Reprocessar uma sessão — outra persona, limiar de
+        # cobertura recalibrado — não muda o que foi dito, e a própria sessão d5caa4fd
+        # pagou o STT duas vezes por isso. A transcrição pertence ao áudio: o endpoint
+        # /audio a apaga ao receber áudio novo, então "existe" significa "é deste áudio".
+        transcript = _transcricao_reaproveitavel(presentation)
+        if transcript is None:
+            stt_ready_path = audio_service.normalize_for_stt(presentation.audio_path)
+            transcript = await transcritor.transcrever(
+                stt_ready_path, presentation_id=presentation.id
+            )
+        else:
+            logger.info(
+                "Sessão %s: transcrição anterior reaproveitada, STT não chamado.",
+                presentation.id,
+            )
 
         # 2. FORMA: ritmo e pausas
         metrics = audio_service.analyze_form(presentation.audio_path, transcript)
@@ -153,6 +166,20 @@ async def run_pipeline(
         presentation.error_message = str(exc)
         await db.commit()
         raise
+
+
+def _transcricao_reaproveitavel(presentation: Presentation) -> str | None:
+    """Transcrição anterior da sessão, se houver uma que valha a pena reusar.
+
+    Transcrição vazia não é reaproveitada: pode ser o resultado legítimo de um áudio sem
+    fala, mas também de uma resposta degenerada do modelo — e as duas são indistinguíveis
+    depois do fato. Repetir o STT é o preço de não confundir "não disse nada" com "o
+    modelo não respondeu".
+    """
+    feedback = presentation.feedback
+    if feedback is None or not feedback.transcript:
+        return None
+    return feedback.transcript
 
 
 def _avaliar_cobertura(
