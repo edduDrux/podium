@@ -56,9 +56,12 @@ precisam pelas portas; `provedores.py` é o único módulo que conhece as escolh
 É isso que permite rodar `run_pipeline` inteiro com dublês — sem rede, sem cota, sem
 Postgres.
 
-**Fluxo:** `POST /init` → `POST /{id}/audio` (inteiro ou chunks) → `POST /{id}/analyze`
+**Fluxo:** `POST /init` → `POST /{id}/audio` (inteiro ou chunks) → *(opcional)* `PUT /{id}/transcript` → `POST /{id}/analyze`
 (**202** + `BackgroundTasks`) → polling `GET /{id}` até `completed` → `GET /{id}/feedback`.
 A tarefa de fundo abre a **própria** sessão de banco (a do request já morreu).
+O Cliente VR pode mandar a fala **já transcrita no headset** (`PUT /{id}/transcript`),
+e aí o STT não roda (DECISOES §10). `GET /{id}/slides[/{n}]` serve as páginas em PNG
+para a tela da sala, porque no Quest não há PowerPoint nem Docker para converter.
 Reprocessar (`/analyze` de novo) **reaproveita a transcrição** e pula o STT; áudio novo
 no `/audio` a invalida (DECISOES §9).
 

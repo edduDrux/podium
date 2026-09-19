@@ -77,6 +77,9 @@ métricas, a taxa de aterramento e as perguntas com a evidência de cada uma.
 | `POST` | `/api/v1/presentations/{session_id}/audio` | Recebe o áudio completo ou um chunk (`is_chunk=true` anexa ao anterior). |
 | `POST` | `/api/v1/presentations/{session_id}/analyze` | Dispara o pipeline **em segundo plano**. Retorna `202` na hora com a `poll_url`. |
 | `GET` | `/api/v1/presentations/{session_id}` | Status da sessão (usado no polling). |
+| `PUT` | `/api/v1/presentations/{session_id}/transcript` | Recebe a fala **já transcrita no headset** (`transcript`, `engine?`). O `/analyze` então pula o STT. Enviar depois do último chunk e antes do `/analyze`. |
+| `GET` | `/api/v1/presentations/{session_id}/slides` | Quantas páginas o servidor consegue desenhar desta apresentação. |
+| `GET` | `/api/v1/presentations/{session_id}/slides/{numero}` | Uma página em **PNG** (`largura?`), para a tela da sala no headset. Só PDF. |
 | `GET` | `/api/v1/presentations/{session_id}/feedback` | Recupera o Feedback Duplo já processado. |
 | `GET` | `/api/v1/health` | Liveness + checagem do banco. |
 
