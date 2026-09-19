@@ -65,3 +65,44 @@ class AudioUploadResponse(BaseModel):
     received_bytes: int
     duration_seconds: float | None = None
     message: str = "Áudio recebido com sucesso."
+
+
+class TranscriptSubmission(BaseModel):
+    """Corpo do `PUT /presentations/{id}/transcript`: a fala já em texto.
+
+    O Cliente VR transcreve no próprio headset enquanto a pessoa fala e entrega o
+    resultado no fim, para que o `/analyze` pule o STT do servidor.
+    """
+
+    transcript: str = Field(
+        min_length=1,
+        max_length=200_000,
+        description="Texto integral da fala, na ordem em que foi dita.",
+    )
+    engine: str | None = Field(
+        default=None,
+        max_length=80,
+        description="Quem transcreveu (ex.: 'whisper.cpp ggml-base-q5_1'), para a auditoria.",
+    )
+
+
+class TranscriptAcceptedResponse(BaseModel):
+    session_id: uuid.UUID
+    status: PresentationStatus
+    char_count: int
+    word_count: int
+    message: str = "Transcrição registrada; o /analyze não chamará o STT do servidor."
+
+
+class SlidesInfoResponse(BaseModel):
+    """`GET /presentations/{id}/slides`: quantas páginas o servidor consegue desenhar."""
+
+    session_id: uuid.UUID
+    file_type: SourceFileType
+    total: int = Field(description="Páginas renderizáveis; 0 quando o formato não permite.")
+    renderizavel: bool
+    motivo: str | None = Field(
+        default=None, description="Por que não há imagens, quando `renderizavel` é falso."
+    )
+    largura_padrao: int
+    largura_maxima: int

@@ -8,6 +8,8 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
+    Response,
     UploadFile,
     status,
 )
@@ -24,12 +26,17 @@ from app.schemas.presentation import (
     AudioUploadResponse,
     PresentationInitResponse,
     PresentationResponse,
+    SlidesInfoResponse,
+    TranscriptAcceptedResponse,
+    TranscriptSubmission,
 )
 from app.services import (
     analysis_service,
     audio_service,
+    slide_render_service,
     slides_service,
     storage_service,
+    transcript_service,
 )
 
 logger = logging.getLogger(__name__)
@@ -298,6 +305,125 @@ async def analyze_presentation(
         # O objeto em memória não acompanhou o UPDATE feito direto no banco.
         status=PresentationStatus.PROCESSING,
         poll_url=f"{settings.API_V1_PREFIX}/presentations/{presentation.id}",
+    )
+
+
+@router.put(
+    "/{session_id}/transcript",
+    response_model=TranscriptAcceptedResponse,
+    summary="Recebe a transcrição feita no próprio Cliente VR",
+)
+async def submit_transcript(
+    db: DbSession,
+    presentation: CurrentPresentation,
+    corpo: TranscriptSubmission,
+) -> TranscriptAcceptedResponse:
+    """Registra a fala já transcrita pelo headset, para que o `/analyze` pule o STT.
+
+    O headset transcreve enquanto a pessoa fala (whisper.cpp local) e manda o texto DEPOIS
+    do último chunk de áudio — a ordem importa, porque o `/audio` apaga qualquer
+    transcrição ao receber áudio novo. O áudio continua obrigatório: as métricas de forma
+    saem do sinal, não do texto.
+
+    Sem estado novo no ciclo de vida: a sessão segue `created`/`audio_received`, e a
+    análise decide pelo conteúdo, como já faz com uma transcrição reaproveitada.
+    """
+    if presentation.status == PresentationStatus.PROCESSING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Esta sessão está sendo analisada; envie a transcrição antes do /analyze.",
+        )
+
+    try:
+        feedback = transcript_service.registrar(
+            presentation, corpo.transcript, corpo.engine
+        )
+    except transcript_service.TranscricaoVaziaError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+    db.add(feedback)
+    await db.commit()
+
+    logger.info(
+        "Sessão %s recebeu transcrição do cliente (%s): %d caracteres.",
+        presentation.id,
+        corpo.engine or "motor não informado",
+        len(feedback.transcript),
+    )
+
+    return TranscriptAcceptedResponse(
+        session_id=presentation.id,
+        status=presentation.status,
+        char_count=len(feedback.transcript),
+        word_count=len(feedback.transcript.split()),
+    )
+
+
+@router.get(
+    "/{session_id}/slides",
+    response_model=SlidesInfoResponse,
+    summary="Quantas páginas da apresentação o servidor consegue desenhar",
+)
+async def get_slides_info(presentation: CurrentPresentation) -> SlidesInfoResponse:
+    """Metadados para a tela da sala: o Cliente VR decide daqui quantas imagens pedir."""
+    total = 0
+    if slide_render_service.renderizavel(presentation):
+        total = await run_in_threadpool(
+            slide_render_service.contar_paginas, presentation.file_path
+        )
+
+    return SlidesInfoResponse(
+        session_id=presentation.id,
+        file_type=presentation.file_type,
+        total=total,
+        renderizavel=total > 0,
+        motivo=slide_render_service.motivo_de_nao_renderizar(presentation),
+        largura_padrao=slide_render_service.LARGURA_PADRAO,
+        largura_maxima=slide_render_service.LARGURA_MAXIMA,
+    )
+
+
+@router.get(
+    "/{session_id}/slides/{numero}",
+    summary="Uma página da apresentação em PNG, para a tela da sala",
+    response_class=Response,
+    responses={200: {"content": {"image/png": {}}}},
+)
+async def get_slide_image(
+    presentation: CurrentPresentation,
+    numero: int,
+    largura: Annotated[
+        int | None,
+        Query(description="Largura em pixels; a altura segue a proporção da página."),
+    ] = None,
+) -> Response:
+    """Renderiza a página `numero` (base 1) do PDF que veio no `/init`.
+
+    A numeração é a do arquivo — a mesma do `[Slide N]` do texto extraído e do
+    `slide_origem` das perguntas. É isso que deixa o cliente levar a parede ao slide que
+    gerou a pergunta sem tabela de conversão nenhuma.
+    """
+    if not slide_render_service.renderizavel(presentation):
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=slide_render_service.motivo_de_nao_renderizar(presentation),
+        )
+
+    largura_px = slide_render_service.largura_valida(largura)
+    try:
+        imagem = await run_in_threadpool(
+            slide_render_service.pagina_em_cache, presentation, numero, largura_px
+        )
+    except slide_render_service.PaginaInexistenteError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    return Response(
+        content=imagem,
+        media_type="image/png",
+        # O PDF da sessão não muda depois do /init: o headset pode guardar a imagem.
+        headers={"Cache-Control": "private, max-age=86400"},
     )
 
 
