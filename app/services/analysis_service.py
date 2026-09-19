@@ -22,7 +22,7 @@ from app.schemas.feedback import (
     SlideCoverageReport,
     SpeechMetrics,
 )
-from app.services import audio_service, provedores
+from app.services import audio_service, provedores, transcript_service
 
 logger = logging.getLogger(__name__)
 
@@ -102,10 +102,20 @@ async def run_pipeline(
             transcript = await transcritor.transcrever(
                 stt_ready_path, presentation_id=presentation.id
             )
+            origem = transcript_service.descrever(
+                transcript_service.ORIGEM_SERVIDOR, settings.STT_MODEL
+            )
         else:
+            # A transcrição pode ter vindo pronta do headset (transcript_service) ou de
+            # uma análise anterior; a origem gravada com ela viaja junto, e um feedback
+            # anterior a esse registro só pode ter vindo do STT daqui.
+            origem = transcript_service.origem_registrada(
+                presentation.feedback
+            ) or transcript_service.descrever(transcript_service.ORIGEM_SERVIDOR, None)
             logger.info(
-                "Sessão %s: transcrição anterior reaproveitada, STT não chamado.",
+                "Sessão %s: transcrição existente (%s) reaproveitada, STT não chamado.",
                 presentation.id,
+                transcript_service.rotulo(origem),
             )
 
         # 2. FORMA: ritmo e pausas
@@ -141,6 +151,7 @@ async def run_pipeline(
                 "transcricao_truncada": generation.transcricao_truncada,
             },
             COVERAGE_KEY: coverage.model_dump(),
+            transcript_service.TRANSCRIPT_KEY: origem,
         }
 
         db.add(feedback)
@@ -158,6 +169,7 @@ async def run_pipeline(
             slides_truncados=generation.slides_truncados,
             transcricao_truncada=generation.transcricao_truncada,
             slide_coverage=coverage,
+            transcript_source=transcript_service.rotulo(origem),
         )
 
     except Exception as exc:
@@ -248,6 +260,7 @@ def to_response(presentation: Presentation) -> FeedbackResponse:
     aterramento = metrics_data.pop(GROUNDING_KEY, {}) or {}
     contexto = metrics_data.pop(CONTEXT_KEY, {}) or {}
     cobertura_gravada = metrics_data.pop(COVERAGE_KEY, None)
+    metrics_data.pop(transcript_service.TRANSCRIPT_KEY, None)
     questions = _questions_persistidas(feedback.questions, presentation.id)
 
     return FeedbackResponse(
@@ -265,6 +278,9 @@ def to_response(presentation: Presentation) -> FeedbackResponse:
         slides_truncados=contexto.get("slides_truncados", False),
         transcricao_truncada=contexto.get("transcricao_truncada", False),
         slide_coverage=_cobertura_persistida(cobertura_gravada, presentation.id),
+        transcript_source=transcript_service.rotulo(
+            transcript_service.origem_registrada(feedback)
+        ),
     )
 
 
