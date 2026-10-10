@@ -22,7 +22,7 @@ from app.schemas.feedback import (
     SlideCoverageReport,
     SpeechMetrics,
 )
-from app.services import audio_service, provedores
+from app.services import audio_service, provedores, transcript_service
 
 logger = logging.getLogger(__name__)
 
@@ -89,11 +89,34 @@ async def run_pipeline(
     await db.commit()
 
     try:
-        # 1. Áudio bruto do VR -> formato enxuto -> transcrição (Gemini multimodal)
-        stt_ready_path = audio_service.normalize_for_stt(presentation.audio_path)
-        transcript = await transcritor.transcrever(
-            stt_ready_path, presentation_id=presentation.id
-        )
+        # 1. Transcrição — reaproveitada quando a sessão já tem uma DESTE áudio.
+        # O STT é a etapa mais cara do pipeline (tokens proporcionais à duração: 11.019
+        # para 436,5 s de áudio, medido na sessão d5caa4fd em 2026-08-30) e a mais lenta
+        # (0,28-0,41x tempo real). Reprocessar uma sessão — outra persona, limiar de
+        # cobertura recalibrado — não muda o que foi dito, e a própria sessão d5caa4fd
+        # pagou o STT duas vezes por isso. A transcrição pertence ao áudio: o endpoint
+        # /audio a apaga ao receber áudio novo, então "existe" significa "é deste áudio".
+        transcript = _transcricao_reaproveitavel(presentation)
+        if transcript is None:
+            stt_ready_path = audio_service.normalize_for_stt(presentation.audio_path)
+            transcript = await transcritor.transcrever(
+                stt_ready_path, presentation_id=presentation.id
+            )
+            origem = transcript_service.descrever(
+                transcript_service.ORIGEM_SERVIDOR, settings.STT_MODEL
+            )
+        else:
+            # A transcrição pode ter vindo pronta do headset (transcript_service) ou de
+            # uma análise anterior; a origem gravada com ela viaja junto, e um feedback
+            # anterior a esse registro só pode ter vindo do STT daqui.
+            origem = transcript_service.origem_registrada(
+                presentation.feedback
+            ) or transcript_service.descrever(transcript_service.ORIGEM_SERVIDOR, None)
+            logger.info(
+                "Sessão %s: transcrição existente (%s) reaproveitada, STT não chamado.",
+                presentation.id,
+                transcript_service.rotulo(origem),
+            )
 
         # 2. FORMA: ritmo e pausas
         metrics = audio_service.analyze_form(presentation.audio_path, transcript)
@@ -128,6 +151,7 @@ async def run_pipeline(
                 "transcricao_truncada": generation.transcricao_truncada,
             },
             COVERAGE_KEY: coverage.model_dump(),
+            transcript_service.TRANSCRIPT_KEY: origem,
         }
 
         db.add(feedback)
@@ -145,6 +169,7 @@ async def run_pipeline(
             slides_truncados=generation.slides_truncados,
             transcricao_truncada=generation.transcricao_truncada,
             slide_coverage=coverage,
+            transcript_source=transcript_service.rotulo(origem),
         )
 
     except Exception as exc:
@@ -153,6 +178,20 @@ async def run_pipeline(
         presentation.error_message = str(exc)
         await db.commit()
         raise
+
+
+def _transcricao_reaproveitavel(presentation: Presentation) -> str | None:
+    """Transcrição anterior da sessão, se houver uma que valha a pena reusar.
+
+    Transcrição vazia não é reaproveitada: pode ser o resultado legítimo de um áudio sem
+    fala, mas também de uma resposta degenerada do modelo — e as duas são indistinguíveis
+    depois do fato. Repetir o STT é o preço de não confundir "não disse nada" com "o
+    modelo não respondeu".
+    """
+    feedback = presentation.feedback
+    if feedback is None or not feedback.transcript:
+        return None
+    return feedback.transcript
 
 
 def _avaliar_cobertura(
@@ -221,6 +260,7 @@ def to_response(presentation: Presentation) -> FeedbackResponse:
     aterramento = metrics_data.pop(GROUNDING_KEY, {}) or {}
     contexto = metrics_data.pop(CONTEXT_KEY, {}) or {}
     cobertura_gravada = metrics_data.pop(COVERAGE_KEY, None)
+    metrics_data.pop(transcript_service.TRANSCRIPT_KEY, None)
     questions = _questions_persistidas(feedback.questions, presentation.id)
 
     return FeedbackResponse(
@@ -238,6 +278,9 @@ def to_response(presentation: Presentation) -> FeedbackResponse:
         slides_truncados=contexto.get("slides_truncados", False),
         transcricao_truncada=contexto.get("transcricao_truncada", False),
         slide_coverage=_cobertura_persistida(cobertura_gravada, presentation.id),
+        transcript_source=transcript_service.rotulo(
+            transcript_service.origem_registrada(feedback)
+        ),
     )
 
 

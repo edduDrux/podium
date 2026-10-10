@@ -101,6 +101,13 @@ class FeedbackResponse(BaseModel):
     # medição zerada.
     slide_coverage: SlideCoverageReport | None = None
 
+    # Quem produziu a transcrição: `servidor (gemini-3.5-flash)` quando o STT rodou aqui,
+    # `cliente_vr (whisper.cpp ...)` quando o headset a entregou pronta. Importa para o
+    # relatório — as duas fontes têm acurácia e latência diferentes — e para depurar uma
+    # sessão em que a banca perguntou sobre algo que não foi dito. None em feedback
+    # anterior a este registro.
+    transcript_source: str | None = None
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def taxa_aterramento(self) -> float:

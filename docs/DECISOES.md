@@ -219,3 +219,88 @@ tudo antes do relatório — ou voltar ao flash-latest quando o 503 passar, reve
 `env_file` aplica na criação do container) — a primeira retentativa pós-troca ainda usou
 o modelo antigo, flagrado pela coluna `modelo` da `llm_calls`. Mudou o `.env`, use
 `docker compose up -d api`.
+
+## 9. Reaproveitamento da transcrição no reprocessamento (2026-09-01)
+
+**Evidência:** a sessão `d5caa4fd` tem dois registros STT idênticos em `llm_calls`
+(11.019 tokens de entrada cada; 124,0 s e 179,5 s de latência). Foi reprocessada e pagou
+a transcrição duas vezes. O STT é a etapa mais cara do pipeline (tokens proporcionais à
+duração do áudio) e a mais lenta (0,28–0,41× tempo real, medidos).
+
+**Mudança:** `run_pipeline` reaproveita `feedbacks.transcript` quando existe e não é
+vazio, pulando o STT; o endpoint `/audio` apaga a transcrição ao receber áudio novo
+(inteiro ou chunk), para que "existe" signifique "é deste áudio". Transcrição vazia não é
+reaproveitada — indistinguível, depois do fato, de resposta degenerada do modelo. Três
+testes em `tests/test_analysis_service.py` com um transcritor-espião.
+
+**Custo por apresentação de 15 min** (tokens extrapolados da sessão real; preço de tabela
+do Gemini 3.5 Flash em 2026-09, áudio a $3,00/M, texto a $1,50/M, saída a $9,00/M):
+STT ≈ $0,09–0,11, geração ≈ $0,02. Um STT dedicado (Whisper-1, $0,006/min) custaria
+≈ $0,09 pelos mesmos 15 min: **trocar o transcritor não é decisão de custo**. Se a troca
+vier, o argumento é latência — e precisa de medição própria.
+
+**Cliente VR (`podium-vr`):** primeiro fluxo completo Unity → API → Feedback Duplo em
+2026-09-01, com o `fala.wav` sintético das fixtures (tom saturado, feito para testar
+pausas): transcrição vazia, 0 ppm, cobertura 0% com alerta — comportamento correto,
+"degradar sem inventar", com 6/6 perguntas ancoradas nos slides. STT 21,7 s e geração
+**50,6 s** nesta sessão; o histórico de geração com o 3.5-flash vai de 15,9 s a 86,2 s.
+
+## 10. Transcrição no cliente e slides servidos pelo backend (2026-09-19)
+
+Duas mudanças pedidas pelo Cliente VR para que ele rode **dentro do headset**, onde não
+há PowerPoint, nem Docker, nem paciência para três minutos de espera.
+
+### 10.1 `PUT /presentations/{id}/transcript`
+
+O headset transcreve a fala **enquanto ela acontece** (whisper.cpp local) e entrega o
+texto pronto. O `/analyze` então encontra `feedbacks.transcript` preenchido e pula o STT
+pelo mesmo caminho da §9 — não houve estado novo nem ramo novo no pipeline, só mais uma
+forma de a transcrição já existir.
+
+**O que isso economiza,** com os números medidos da sessão real de 7,3 min (§9): os
+11.019 tokens de entrada do STT por análise e os 124 s de latência dele. Sobra a geração
+das perguntas (15,9–86,2 s com o `gemini-3.5-flash`). Numa fala de 15 min a economia
+projetada é de ≈ $0,09–0,11 por sessão e de ~3 min de espera.
+
+**Ordem obrigatória:** o texto vai **depois** do último chunk de áudio e **antes** do
+`/analyze`. O `/audio` apaga a transcrição ao receber áudio novo (§9), então inverter a
+ordem apagaria o que o headset acabou de mandar.
+
+**O áudio continua obrigatório.** As métricas de forma derivam do sinal, não do texto
+(invariante do CLAUDE.md §9), e o `/analyze` segue recusando sessão sem áudio.
+
+**Transcrição vazia é recusada com 422**, pelo mesmo motivo da §9: o pipeline não
+reaproveita transcrição vazia, então aceitá-la só criaria a ilusão de que o STT seria
+pulado. O texto passa pelo mesmo filtro de emoji do STT do servidor
+(`stt_service.limpar_transcricao`) — texto vindo de fora é dado, e a regra que vale para
+o Gemini vale para o whisper do headset.
+
+**`transcript_source` no contrato.** `servidor (gemini-3.5-flash)` ou
+`cliente_vr (whisper.cpp ggml-base-q5_1)`, gravado no JSONB de métricas junto do
+aterramento e da cobertura (mesmo racional: sem migration). As duas fontes têm acurácia e
+latência diferentes, e o §14 do relatório precisa distinguir qual produziu cada número —
+sem isso, uma comparação de WER entre as duas seria impossível depois do fato.
+
+### 10.2 `GET /{id}/slides` e `GET /{id}/slides/{numero}`
+
+O Cliente VR projeta os slides numa parede virtual, e o Unity não rasteriza PDF. No PC ele
+resolve com o PowerPoint da máquina ou com `docker exec` neste container; no Quest não há
+nem um nem outro. Como o arquivo já está aqui desde o `/init`, o servidor desenha as
+páginas: `get_pixmap` do **mesmo PyMuPDF** que extrai o texto, de modo que a página 7 da
+parede é a página 7 da âncora da pergunta.
+
+Cache por `(página, largura)` em `storage/<session>/slides/`, que a retenção de 24 h já
+limpa junto com o PDF. Largura pedida pelo cliente, limitada a 320–2560 px: abaixo disso
+o slide é ilegível na parede, acima a textura não cabe com folga no Quest junto dos dois
+slides vizinhos.
+
+**Só PDF.** O `python-pptx` lê texto, não desenha, e não há LibreOffice na imagem —
+acrescentá-lo custaria ~400 MB numa imagem que roda em 1 OCPU/12 GB ARM64 (CLAUDE.md §5).
+O `415` diz isso ao usuário com a saída ("exporte como PDF") em vez de devolver parede
+vazia.
+
+**Testes executados em 2026-09-19:** `docker compose exec api python -m pytest tests/` →
+**72 passando**, e `ruff check .` limpo. Os dois serviços novos entram com 13 testes
+(`test_transcript_service.py`, `test_slide_render_service.py`). Uma armadilha achada
+ao rodar: aberto como documento, um PNG é medido em PONTOS a 72 dpi, então uma imagem de
+400 px aparece como 300 — a verificação de tamanho tem de usar `fitz.Pixmap`.
