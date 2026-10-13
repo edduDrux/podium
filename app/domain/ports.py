@@ -9,16 +9,22 @@ problemas concretos:
    adaptador declara o que precisa e quem monta o sistema decide o que entregar.
 
 2. **Testar sem infraestrutura.** Um `Transcriber` falso devolve texto fixo e um
-   `Panel` falso devolve perguntas fixas, permitindo exercitar o pipeline
-   inteiro sem rede, sem cota de IA e sem Postgres.
+   `LanguageModel` falso devolve o JSON que um modelo devolveria, permitindo exercitar o
+   pipeline inteiro — inclusive o aterramento — sem rede, sem cota de IA e sem Postgres.
+
+O ponto de troca de cada porta fica onde algo realmente varia. Na banca, o que varia é o
+transporte até o modelo (Gemini hoje, outro provedor amanhã, o dublê nos testes); o que
+perguntar e o que aceitar da resposta é regra, e mora em `app.domain.panel`. Por isso a
+porta é `LanguageModel` (texto entra, texto sai) e não "gere as perguntas": se fosse,
+cada provedor teria de reimplementar — e lembrar de chamar — o aterramento.
 
 São `Protocol` e não classes-base: a implementação não precisa herdar nada, basta ter os
 métodos. Mantém os adaptadores legíveis e evita hierarquia cerimonial num projeto de um
 desenvolvedor só.
 
 São `runtime_checkable` para que um `isinstance` confirme que um dublê de teste implementa
-mesmo a porta — a verificação checa a presença dos métodos, não as assinaturas, mas pega
-o erro mais comum, que é o dublê ficar defasado quando a porta ganha um método.
+mesmo a porta — a verificação checa a presença dos métodos; as assinaturas, quem confere
+é o mypy.
 """
 
 import uuid
@@ -26,8 +32,7 @@ from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from app.core.enums import LLMCallStage, PersonaType
-from app.domain.panel import GenerationResult
+from app.core.enums import LLMCallStage
 
 
 @runtime_checkable
@@ -63,13 +68,17 @@ class Transcriber(Protocol):
 
 
 @runtime_checkable
-class Panel(Protocol):
-    """Formula as perguntas da banca a partir do material e da fala."""
+class LanguageModel(Protocol):
+    """Envia um prompt ao modelo de linguagem e devolve o texto da resposta.
 
-    async def generate_questions(
+    Devolve `None` quando o provedor não produz resposta nenhuma (chamada barrada pelo
+    próprio provedor) — o domínio trata isso como "zero perguntas", que é degradação
+    prevista, e não como falha da sessão.
+    """
+
+    async def complete(
         self,
-        slides_text: str,
-        transcript: str,
-        persona: PersonaType,
+        system: str,
+        user: str,
         presentation_id: uuid.UUID | None = None,
-    ) -> GenerationResult: ...
+    ) -> str | None: ...

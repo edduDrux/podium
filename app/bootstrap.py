@@ -9,13 +9,18 @@ reaproveita o cliente HTTP do SDK, e criar um por requisição desperdiçaria co
 """
 
 from app.adapters.audit import DatabaseAudit
-from app.adapters.gemini_llm import GeminiPanel
+from app.adapters.gemini_llm import GeminiLanguageModel
 from app.adapters.gemini_stt import GeminiTranscriber
-from app.domain.ports import Panel, Transcriber
+from app.core.config import settings
+from app.domain.ports import LanguageModel, Transcriber
 
 _audit = DatabaseAudit()
 _transcriber: Transcriber = GeminiTranscriber(_audit)
-_panel: Panel = GeminiPanel(_audit)
+# A temperatura é a mesma para todas as personas (DECISOES §11): variar por persona
+# misturaria estilo com aleatoriedade na comparação entre elas.
+_language_model: LanguageModel = GeminiLanguageModel(
+    _audit, model=settings.LLM_MODEL, temperature=settings.LLM_TEMPERATURE
+)
 
 
 def transcriber() -> Transcriber:
@@ -23,6 +28,6 @@ def transcriber() -> Transcriber:
     return _transcriber
 
 
-def panel() -> Panel:
-    """Serviço de geração de perguntas em uso."""
-    return _panel
+def language_model() -> LanguageModel:
+    """Modelo de linguagem em uso pela banca."""
+    return _language_model

@@ -1,9 +1,11 @@
 """Testes do pipeline do Feedback Duplo com dublês nas portas.
 
 É a colheita do investimento em `domain/ports.py`: o `run_pipeline` inteiro roda aqui sem
-rede, sem cota de IA e sem Postgres. O que se verifica é o invariante mais importante do
-sistema — **degradar sem inventar**: banca vazia conclui a sessão como COMPLETED, com a
-transcrição, as métricas de forma e a cobertura preservadas, nunca como FAILED.
+rede, sem cota de IA e sem Postgres — e, desde que a porta da banca passou a ser o
+transporte (`LanguageModel`), com o aterramento de verdade no caminho. O que se verifica
+é o invariante mais importante do sistema — **degradar sem inventar**: pergunta que não se
+ancora no material não chega ao feedback, e banca vazia conclui a sessão como COMPLETED,
+com a transcrição, as métricas de forma e a cobertura preservadas, nunca como FAILED.
 
 O banco é um dublê porque `run_pipeline` só usa `add` e `commit` da sessão; subir um
 Postgres para observar duas chamadas seria pagar caro por menos isolamento.
@@ -11,56 +13,25 @@ Postgres para observar duas chamadas seria pagar caro por menos isolamento.
 
 import asyncio
 import time
-import uuid
 
 import pytest
 
 from app.adapters import audio
-from app.core.enums import PersonaType, PresentationStatus
-from app.domain import slides
-from app.domain.panel import GenerationResult, Question
-from app.domain.ports import Panel, Transcriber
+from app.core.enums import PresentationStatus
+from app.domain.ports import LanguageModel, Transcriber
 from app.models.feedback import Feedback
-from app.models.presentation import Presentation
-from app.schemas.feedback import QuestionResponse
 from app.services import analysis_service
-from tests.services.conftest import FAKE_SIGNAL
-
-SLIDES_TEXT = slides.assemble(
-    [
-        slides.block(1, "A metodologia experimental adotada nesta pesquisa"),
-        slides.block(2, "Resultados coletados durante o semestre letivo"),
-    ]
+from tests.services.conftest import (
+    FAKE_SIGNAL,
+    GROUNDED_ITEM,
+    INVENTED_ITEM,
+    BlockedLanguageModel,
+    FakeDatabase,
+    FakeLanguageModel,
+    FakeTranscriber,
+    SpyTranscriber,
+    model_answer,
 )
-
-QUESTION = Question(
-    text="Por que a metodologia experimental foi escolhida?",
-    rationale=None,
-    slide_number=1,
-    quote="A metodologia experimental adotada nesta pesquisa",
-)
-
-
-class FakeDatabase:
-    """O mínimo da AsyncSession que `run_pipeline` usa, registrando o que passou por ele."""
-
-    def __init__(self) -> None:
-        self.added: list = []
-        self.commits = 0
-
-    def add(self, instance) -> None:
-        self.added.append(instance)
-
-    async def commit(self) -> None:
-        self.commits += 1
-
-
-class FakeTranscriber:
-    def __init__(self, text: str = "falei sobre a metodologia experimental") -> None:
-        self._text = text
-
-    async def transcribe(self, audio_path, language="pt", presentation_id=None) -> str:
-        return self._text
 
 
 class FailingTranscriber:
@@ -68,58 +39,42 @@ class FailingTranscriber:
         raise RuntimeError("provedor de STT indisponível")
 
 
-class FakePanel:
-    """Devolve um `GenerationResult` fixo — inclusive o vazio, que é o caso interessante."""
-
-    def __init__(self, result: GenerationResult) -> None:
-        self._result = result
-
-    async def generate_questions(
-        self, slides_text, transcript, persona, presentation_id=None
-    ) -> GenerationResult:
-        return self._result
-
-
-@pytest.fixture
-def presentation() -> Presentation:
-    return Presentation(
-        id=uuid.uuid4(),
-        persona=PersonaType.STRICT_PROFESSOR,
-        status=PresentationStatus.AUDIO_RECEIVED,
-        file_path="/tmp/apresentacao.pdf",
-        file_filename="apresentacao.pdf",
-        audio_path="/tmp/fala.wav",
-        slides_text=SLIDES_TEXT,
-    )
-
-
 def test_doubles_satisfy_the_ports():
     """As portas são `runtime_checkable` justamente para pegar dublê defasado."""
     assert isinstance(FakeTranscriber(), Transcriber)
-    assert isinstance(FakePanel(GenerationResult([], "", 0, 0)), Panel)
+    assert isinstance(FakeLanguageModel(), LanguageModel)
 
 
 @pytest.mark.asyncio
 async def test_happy_path_completes_with_full_feedback(presentation):
     db = FakeDatabase()
-    result = GenerationResult(
-        questions=[QUESTION],
-        content_analysis="Domínio consistente do conteúdo.",
-        questions_generated=2,
-        questions_approved=1,
+    model = FakeLanguageModel(
+        model_answer([GROUNDED_ITEM, INVENTED_ITEM], "Domínio consistente do conteúdo.")
     )
 
-    response = await analysis_service.run_pipeline(
-        db, presentation, FakeTranscriber(), FakePanel(result)
-    )
+    response = await analysis_service.run_pipeline(db, presentation, FakeTranscriber(), model)
 
     assert presentation.status == PresentationStatus.COMPLETED
-    assert response.questions == [QuestionResponse.from_question(QUESTION)]
+    assert [q.question for q in response.questions] == [GROUNDED_ITEM["question"]]
     assert response.transcript == "falei sobre a metodologia experimental"
     assert response.questions_generated == 2
     assert response.grounding_rate == 0.5
     assert response.slide_coverage is not None
     assert db.added, "o feedback não foi persistido"
+
+
+@pytest.mark.asyncio
+async def test_invented_question_never_reaches_the_feedback(presentation):
+    """O aterramento roda no pipeline, não no adaptador: nenhum provedor o pula."""
+    db = FakeDatabase()
+    model = FakeLanguageModel(model_answer([INVENTED_ITEM]))
+
+    response = await analysis_service.run_pipeline(db, presentation, FakeTranscriber(), model)
+
+    assert response.questions == []
+    assert response.questions_generated == 1
+    (feedback,) = db.added
+    assert feedback.questions == []
 
 
 @pytest.mark.asyncio
@@ -129,17 +84,15 @@ async def test_empty_panel_completes_the_session_instead_of_failing(presentation
     Marcar FAILED apagaria transcrição, métricas e cobertura — que continuam válidas e
     nada têm a ver com o material não ter sustentado perguntas.
     """
-    db = FakeDatabase()
-    empty_result = GenerationResult(
-        questions=[], content_analysis="", questions_generated=3, questions_approved=0
-    )
+    model = FakeLanguageModel(model_answer([INVENTED_ITEM] * 3))
 
     response = await analysis_service.run_pipeline(
-        db, presentation, FakeTranscriber(), FakePanel(empty_result)
+        FakeDatabase(), presentation, FakeTranscriber(), model
     )
 
     assert presentation.status == PresentationStatus.COMPLETED
     assert response.questions == []
+    assert response.questions_generated == 3
     # O motivo fica registrado, em vez de a sessão sumir sem explicação.
     assert analysis_service.NO_GROUNDED_QUESTIONS in response.content_analysis
     # E o que não dependia do LLM sobreviveu.
@@ -149,16 +102,25 @@ async def test_empty_panel_completes_the_session_instead_of_failing(presentation
 
 
 @pytest.mark.asyncio
+async def test_blocked_model_completes_without_questions(presentation):
+    """Provedor que barra a própria chamada é degradação prevista, não falha da sessão."""
+    response = await analysis_service.run_pipeline(
+        FakeDatabase(), presentation, FakeTranscriber(), BlockedLanguageModel()
+    )
+
+    assert presentation.status == PresentationStatus.COMPLETED
+    assert response.questions == []
+    assert response.transcript
+
+
+@pytest.mark.asyncio
 async def test_coverage_comes_out_even_without_questions(presentation):
     """A cobertura é calculada antes e independentemente do LLM."""
-    db = FakeDatabase()
-    empty_result = GenerationResult([], "", 0, 0)
-
     response = await analysis_service.run_pipeline(
-        db,
+        FakeDatabase(),
         presentation,
         FakeTranscriber("hoje eu falei apenas sobre uma receita de feijoada"),
-        FakePanel(empty_result),
+        FakeLanguageModel(),
     )
 
     coverage = response.slide_coverage
@@ -169,10 +131,8 @@ async def test_coverage_comes_out_even_without_questions(presentation):
 
 @pytest.mark.asyncio
 async def test_empty_transcript_does_not_break_the_pipeline(presentation):
-    db = FakeDatabase()
-
     response = await analysis_service.run_pipeline(
-        db, presentation, FakeTranscriber(""), FakePanel(GenerationResult([], "", 0, 0))
+        FakeDatabase(), presentation, FakeTranscriber(""), FakeLanguageModel()
     )
 
     assert presentation.status == PresentationStatus.COMPLETED
@@ -183,30 +143,13 @@ async def test_empty_transcript_does_not_break_the_pipeline(presentation):
 @pytest.mark.asyncio
 async def test_transcriber_failure_marks_the_session_and_reraises(presentation):
     """Falha real de infraestrutura É FAILED — e o erro fica legível na sessão."""
-    db = FakeDatabase()
-
     with pytest.raises(RuntimeError):
         await analysis_service.run_pipeline(
-            db,
-            presentation,
-            FailingTranscriber(),
-            FakePanel(GenerationResult([], "", 0, 0)),
+            FakeDatabase(), presentation, FailingTranscriber(), FakeLanguageModel()
         )
 
     assert presentation.status == PresentationStatus.FAILED
     assert "STT indisponível" in presentation.error_message
-
-
-class SpyTranscriber:
-    """Conta as chamadas — é o que o reaproveitamento da transcrição precisa provar."""
-
-    def __init__(self, text: str = "transcrição nova") -> None:
-        self._text = text
-        self.calls = 0
-
-    async def transcribe(self, audio_path, language="pt", presentation_id=None) -> str:
-        self.calls += 1
-        return self._text
 
 
 @pytest.mark.asyncio
@@ -219,10 +162,7 @@ async def test_reprocessing_reuses_the_transcript_and_skips_stt(presentation):
     spy = SpyTranscriber()
 
     response = await analysis_service.run_pipeline(
-        FakeDatabase(),
-        presentation,
-        spy,
-        FakePanel(GenerationResult([QUESTION], "ok", 1, 1)),
+        FakeDatabase(), presentation, spy, FakeLanguageModel(model_answer([GROUNDED_ITEM]))
     )
 
     assert spy.calls == 0
@@ -236,9 +176,7 @@ async def test_previous_empty_transcript_is_not_reused(presentation):
     presentation.feedback = Feedback(presentation_id=presentation.id, transcript="")
     spy = SpyTranscriber()
 
-    await analysis_service.run_pipeline(
-        FakeDatabase(), presentation, spy, FakePanel(GenerationResult([], "", 0, 0))
-    )
+    await analysis_service.run_pipeline(FakeDatabase(), presentation, spy, FakeLanguageModel())
 
     assert spy.calls == 1
 
@@ -247,9 +185,7 @@ async def test_previous_empty_transcript_is_not_reused(presentation):
 async def test_session_without_previous_feedback_calls_stt(presentation):
     spy = SpyTranscriber()
 
-    await analysis_service.run_pipeline(
-        FakeDatabase(), presentation, spy, FakePanel(GenerationResult([], "", 0, 0))
-    )
+    await analysis_service.run_pipeline(FakeDatabase(), presentation, spy, FakeLanguageModel())
 
     assert spy.calls == 1
 
@@ -279,10 +215,7 @@ async def test_pipeline_does_not_block_the_event_loop(presentation, monkeypatch)
 
     task = asyncio.create_task(ticker())
     await analysis_service.run_pipeline(
-        FakeDatabase(),
-        presentation,
-        FakeTranscriber(),
-        FakePanel(GenerationResult([], "", 0, 0)),
+        FakeDatabase(), presentation, FakeTranscriber(), FakeLanguageModel()
     )
     task.cancel()
 
@@ -296,10 +229,7 @@ async def test_pipeline_without_audio_fails_with_a_readable_reason(presentation)
 
     with pytest.raises(ValueError):
         await analysis_service.run_pipeline(
-            FakeDatabase(),
-            presentation,
-            FakeTranscriber(),
-            FakePanel(GenerationResult([], "", 0, 0)),
+            FakeDatabase(), presentation, FakeTranscriber(), FakeLanguageModel()
         )
 
     assert presentation.status == PresentationStatus.FAILED

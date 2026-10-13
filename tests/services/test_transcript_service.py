@@ -6,55 +6,11 @@ como qualquer transcrição existente — o STT do servidor não é chamado — 
 sobrevive ao pipeline até a resposta da API.
 """
 
-import uuid
-
 import pytest
 
-from app.core.enums import PersonaType, PresentationStatus
-from app.domain import slides
-from app.domain.panel import GenerationResult
 from app.models.feedback import Feedback
-from app.models.presentation import Presentation
 from app.services import analysis_service, transcript_service
-
-SLIDES_TEXT = slides.assemble([slides.block(1, "A metodologia experimental adotada")])
-
-
-class FakeDatabase:
-    def add(self, instance) -> None:
-        pass
-
-    async def commit(self) -> None:
-        pass
-
-
-class SpyTranscriber:
-    def __init__(self) -> None:
-        self.calls = 0
-
-    async def transcribe(self, audio_path, language="pt", presentation_id=None) -> str:
-        self.calls += 1
-        return "transcrição do servidor"
-
-
-class FakePanel:
-    async def generate_questions(
-        self, slides_text, transcript, persona, presentation_id=None
-    ) -> GenerationResult:
-        return GenerationResult([], "", 0, 0)
-
-
-@pytest.fixture
-def presentation() -> Presentation:
-    return Presentation(
-        id=uuid.uuid4(),
-        persona=PersonaType.STRICT_PROFESSOR,
-        status=PresentationStatus.AUDIO_RECEIVED,
-        file_path="/tmp/apresentacao.pdf",
-        file_filename="apresentacao.pdf",
-        audio_path="/tmp/fala.wav",
-        slides_text=SLIDES_TEXT,
-    )
+from tests.services.conftest import FakeDatabase, FakeLanguageModel, SpyTranscriber
 
 
 def test_register_stores_clean_text_and_origin(presentation):
@@ -110,7 +66,9 @@ async def test_pipeline_uses_the_client_transcript_and_skips_stt(presentation):
     transcript_service.register(presentation, "falei da metodologia experimental", "whisper")
     spy = SpyTranscriber()
 
-    response = await analysis_service.run_pipeline(FakeDatabase(), presentation, spy, FakePanel())
+    response = await analysis_service.run_pipeline(
+        FakeDatabase(), presentation, spy, FakeLanguageModel()
+    )
 
     assert spy.calls == 0
     assert response.transcript == "falei da metodologia experimental"
@@ -125,7 +83,9 @@ async def test_pipeline_uses_the_client_transcript_and_skips_stt(presentation):
 async def test_pipeline_records_the_server_as_origin_when_stt_runs(presentation):
     spy = SpyTranscriber()
 
-    response = await analysis_service.run_pipeline(FakeDatabase(), presentation, spy, FakePanel())
+    response = await analysis_service.run_pipeline(
+        FakeDatabase(), presentation, spy, FakeLanguageModel()
+    )
 
     assert spy.calls == 1
     assert response.transcript_source.startswith("server")

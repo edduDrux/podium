@@ -14,11 +14,15 @@ exigência de cópia, tolerando apenas esse ruído de extração.
 """
 
 import re
+from typing import TYPE_CHECKING
 
 from rapidfuzz import fuzz
 
-from app.domain.panel import Question
 from app.domain.text import normalize as _normalize
+
+if TYPE_CHECKING:
+    # Só para a anotação: o `panel` importa este módulo para aplicar o aterramento.
+    from app.domain.panel import Question
 
 # Números com separadores internos ("1.000", "3,14") capturados inteiros, antes da
 # normalização — `normalize` transforma pontuação em espaço e partiria o decimal.

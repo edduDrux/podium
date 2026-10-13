@@ -14,9 +14,9 @@ from app.adapters import audio
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.enums import PresentationStatus
-from app.domain import coverage, delivery, slides
+from app.domain import coverage, delivery, panel, slides
 from app.domain.panel import GenerationResult
-from app.domain.ports import Panel, Transcriber
+from app.domain.ports import LanguageModel, Transcriber
 from app.models.feedback import Feedback
 from app.models.presentation import Presentation
 from app.schemas.feedback import (
@@ -76,18 +76,19 @@ async def run_pipeline(
     db: AsyncSession,
     presentation: Presentation,
     transcriber: Transcriber | None = None,
-    panel: Panel | None = None,
+    language_model: LanguageModel | None = None,
 ) -> FeedbackResponse:
     """Orquestra o Feedback Duplo: STT -> métricas de forma -> perguntas do LLM.
 
     Persiste o resultado em `feedbacks` e atualiza o status da sessão.
 
     Os serviços externos entram por parâmetro, como portas. Em produção vêm da raiz de
-    composição; num teste, um transcritor e uma banca falsos exercitam o pipeline inteiro
+    composição; num teste, um transcritor e um modelo de linguagem falsos exercitam o
+    pipeline inteiro — o aterramento incluído, que roda de verdade sobre o JSON do dublê —
     sem rede, sem cota de IA e sem depender do humor do modelo.
     """
     transcriber = transcriber or bootstrap.transcriber()
-    panel = panel or bootstrap.panel()
+    language_model = language_model or bootstrap.language_model()
     presentation.status = PresentationStatus.PROCESSING
     presentation.error_message = None
     await db.commit()
@@ -145,9 +146,11 @@ async def run_pipeline(
 
         # 3. CONTEÚDO: slides + transcrição + persona -> perguntas ancoradas da banca
         generation = await panel.generate_questions(
+            language_model,
+            persona=presentation.persona,
             slides_text=presentation.slides_text or "",
             transcript=transcript,
-            persona=presentation.persona,
+            min_score=settings.GROUNDING_MIN_SCORE,
             presentation_id=presentation.id,
         )
 
