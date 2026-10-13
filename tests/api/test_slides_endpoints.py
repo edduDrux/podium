@@ -26,7 +26,7 @@ async def test_pdf_info_counts_the_pages(client, presentation):
     assert response.status_code == 200
     body = response.json()
     assert body["total"] == 2
-    assert body["renderizavel"] is True
+    assert body["renderable"] is True
 
 
 @pytest.mark.asyncio
@@ -36,8 +36,8 @@ async def test_pptx_info_explains_why_there_are_no_images(client, pptx_session):
     assert response.status_code == 200
     body = response.json()
     assert body["total"] == 0
-    assert body["renderizavel"] is False
-    assert body["motivo"]
+    assert body["renderable"] is False
+    assert body["reason"]
 
 
 @pytest.mark.asyncio

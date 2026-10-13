@@ -87,9 +87,9 @@ class SlidesInfoResponse(BaseModel):
     session_id: uuid.UUID
     file_type: SourceFileType
     total: int = Field(description="Páginas renderizáveis; 0 quando o formato não permite.")
-    renderizavel: bool
-    motivo: str | None = Field(
-        default=None, description="Por que não há imagens, quando `renderizavel` é falso."
+    renderable: bool
+    reason: str | None = Field(
+        default=None, description="Por que não há imagens, quando `renderable` é falso."
     )
-    largura_padrao: int
-    largura_maxima: int
+    default_width: int
+    max_width: int

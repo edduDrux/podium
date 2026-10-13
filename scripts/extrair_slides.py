@@ -24,33 +24,33 @@ def main() -> int:
         print("Uso: python -m scripts.extrair_slides <arquivo.pdf|arquivo.pptx>")
         return 2
 
-    caminho = Path(sys.argv[1])
-    if not caminho.is_file():
-        print(f"Arquivo não encontrado: {caminho}")
+    path = Path(sys.argv[1])
+    if not path.is_file():
+        print(f"Arquivo não encontrado: {path}")
         return 2
 
-    file_type = presentation_files.detect_type(caminho.name, content_type=None)
+    file_type = presentation_files.detect_type(path.name, content_type=None)
     if file_type is None:
-        print(f"Formato não suportado: {caminho.suffix} (apenas .pdf e .pptx).")
+        print(f"Formato não suportado: {path.suffix} (apenas .pdf e .pptx).")
         return 2
 
-    if not presentation_files.is_valid(caminho, file_type):
+    if not presentation_files.is_valid(path, file_type):
         print(f"O arquivo não pôde ser aberto como {file_type.upper()}.")
         return 1
 
-    texto = presentation_files.extract_text(caminho, file_type)
-    por_slide = slides.parse(texto)
+    text = presentation_files.extract_text(path, file_type)
+    by_slide = slides.parse(text)
 
     print(f"formato       : {file_type.upper()}")
-    print(f"texto extraído: {len(texto)} caracteres")
+    print(f"texto extraído: {len(text)} caracteres")
     # A numeração pode ter buracos (páginas sem texto são puladas) — isso é correto,
     # e mostrá-la explícita evita confundir buraco legítimo com slide perdido.
-    print(f"slides        : {len(por_slide)} -> números {sorted(por_slide)}")
-    if not presentation_files.has_extractable_text(texto):
+    print(f"slides        : {len(by_slide)} -> números {sorted(by_slide)}")
+    if not presentation_files.has_extractable_text(text):
         print("AVISO: abaixo do mínimo de texto extraível — o /init recusaria este arquivo.")
 
     print("\n--- texto no formato do contrato ([Slide N]) ---\n")
-    print(texto)
+    print(text)
     return 0
 
 

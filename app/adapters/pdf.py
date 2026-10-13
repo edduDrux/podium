@@ -11,15 +11,15 @@ def extract_text(pdf_path: Path | str) -> str:
     Páginas sem texto são puladas em vez de virarem um slide vazio — é daí que vêm os
     buracos legítimos na numeração, que o contrato preserva de propósito.
     """
-    blocos: list[str] = []
+    blocks: list[str] = []
 
     with fitz.open(str(pdf_path)) as document:
         for index, page in enumerate(document, start=1):
             text = page.get_text("text").strip()
             if text:
-                blocos.append(slides.bloco(index, text))
+                blocks.append(slides.block(index, text))
 
-    return slides.montar(blocos)
+    return slides.assemble(blocks)
 
 
 def is_valid_pdf(pdf_path: Path | str) -> bool:

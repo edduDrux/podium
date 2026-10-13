@@ -15,30 +15,30 @@ marcador e nunca por `split("\\n\\n")`.
 import re
 
 # `[Slide 1]\nConteúdo...\n\n[Slide 2]\nConteúdo...`
-MARCADOR = "[Slide {numero}]"
-SEPARADOR = "\n\n"
+MARKER = "[Slide {number}]"
+SEPARATOR = "\n\n"
 
 # Ancorado em linha inteira: o marcador só é marcador quando ocupa a linha sozinho. Sem a
 # âncora, um slide que CITE "[Slide 7]" no meio de uma frase vira ponto de corte — nasce
 # um slide fantasma e o slide real perde tudo que vinha depois da citação, fazendo um
-# `trecho_literal` honesto dessa metade ser reprovado como inventado. O `\s+` preserva a
+# `quote` honesto dessa metade ser reprovado como inventado. O `\s+` preserva a
 # tolerância a espaço extra dentro do marcador; a âncora é o que não pode sair.
-MARCADOR_RE = re.compile(r"^\[Slide\s+(\d+)\]$", re.MULTILINE)
+MARKER_RE = re.compile(r"^\[Slide\s+(\d+)\]$", re.MULTILINE)
 
-_ESPACOS_RE = re.compile(r"[ \t]+")
-_LINHAS_EM_BRANCO_RE = re.compile(r"\n{3,}")
+_SPACES_RE = re.compile(r"[ \t]+")
+_BLANK_LINES_RE = re.compile(r"\n{3,}")
 
 
-def bloco(numero: int, conteudo: str) -> str:
+def block(number: int, content: str) -> str:
     """Um slide no formato do contrato: marcador em linha própria, conteúdo abaixo.
 
     O conteúdo entra neutralizado: texto extraído é DADO, e dado não pode forjar a âncora
     de evidência do sistema.
     """
-    return f"{MARCADOR.format(numero=numero)}\n{_neutralizar_marcadores(conteudo)}"
+    return f"{MARKER.format(number=number)}\n{_neutralize_markers(content)}"
 
 
-def _neutralizar_marcadores(conteudo: str) -> str:
+def _neutralize_markers(content: str) -> str:
     """Impede que o CONTEÚDO de um slide seja lido como marcador.
 
     A âncora `^...$` resolve o marcador citado no meio de uma frase, mas não o que ocupa a
@@ -46,40 +46,40 @@ def _neutralizar_marcadores(conteudo: str) -> str:
     formato `[Slide N]` como exemplo, sozinho na linha. Sem tratar na emissão, nasceria um
     slide fantasma e o slide real perderia tudo que vinha depois da citação.
 
-    Recuar um espaço basta porque o marcador legítimo é escrito por `bloco` colado no
-    início da linha, e `normalizar` colapsa espaços repetidos em um só sem nunca removê-los
+    Recuar um espaço basta porque o marcador legítimo é escrito por `block` colado no
+    início da linha, e `normalize` colapsa espaços repetidos em um só sem nunca removê-los
     do começo de uma linha. O texto segue legível para o LLM e idêntico ao que o
     aterramento compara: o modelo copia do material que recebeu.
     """
-    return MARCADOR_RE.sub(lambda achado: f" {achado.group(0)}", conteudo)
+    return MARKER_RE.sub(lambda found: f" {found.group(0)}", content)
 
 
-def montar(blocos: list[str]) -> str:
+def assemble(blocks: list[str]) -> str:
     """Junta os blocos já formatados e normaliza o texto final.
 
     Recebe os blocos prontos em vez dos pares (número, conteúdo) porque cada extrator
     decide sozinho quais páginas entram — o PDF pula página sem texto, e é daí que vêm os
     buracos legítimos na numeração.
     """
-    return normalizar(SEPARADOR.join(blocos))
+    return normalize(SEPARATOR.join(blocks))
 
 
-def normalizar(texto: str) -> str:
+def normalize(text: str) -> str:
     """Colapsa espaços horizontais e reduz sequências de linhas em branco a uma só.
 
     Aplicado ao texto inteiro, depois da junção: é o que garante que o separador entre
     slides seja sempre exatamente `\\n\\n`, independentemente do que cada extrator produziu.
     """
-    texto = _ESPACOS_RE.sub(" ", texto)
-    texto = _LINHAS_EM_BRANCO_RE.sub(SEPARADOR, texto)
-    return texto.strip()
+    text = _SPACES_RE.sub(" ", text)
+    text = _BLANK_LINES_RE.sub(SEPARATOR, text)
+    return text.strip()
 
 
 def parse(slides_text: str) -> dict[int, str]:
     """Quebra o texto extraído em `{numero_do_slide: conteúdo}`.
 
     O número vem do marcador, não da ordem de aparição: é ele que o LLM enxerga no prompt
-    e é ele que a pergunta cita em `slide_origem`. A numeração pode ter buracos — páginas
+    e é ele que a pergunta cita em `slide_number`. A numeração pode ter buracos — páginas
     sem texto são puladas, então um PDF de 5 páginas pode devolver `{1, 2, 5}`. Isso está
     correto e é preservado: renumerar quebraria a referência que o modelo viu.
     """
@@ -87,17 +87,17 @@ def parse(slides_text: str) -> dict[int, str]:
     if not slides_text:
         return slides
 
-    marcadores = list(MARCADOR_RE.finditer(slides_text))
+    markers = list(MARKER_RE.finditer(slides_text))
 
-    for posicao, marcador in enumerate(marcadores):
-        inicio = marcador.end()
-        fim = marcadores[posicao + 1].start() if posicao + 1 < len(marcadores) else len(slides_text)
-        numero = int(marcador.group(1))
-        conteudo = slides_text[inicio:fim].strip()
+    for position, marker in enumerate(markers):
+        start = marker.end()
+        end = markers[position + 1].start() if position + 1 < len(markers) else len(slides_text)
+        number = int(marker.group(1))
+        content = slides_text[start:end].strip()
 
-        anterior = slides.get(numero)
+        previous = slides.get(number)
         # Marcador repetido acumula em vez de sobrescrever: perder metade do conteúdo de
         # um slide faria a validação reprovar trechos legítimos.
-        slides[numero] = f"{anterior}\n{conteudo}" if anterior else conteudo
+        slides[number] = f"{previous}\n{content}" if previous else content
 
     return slides

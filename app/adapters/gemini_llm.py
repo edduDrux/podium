@@ -9,9 +9,9 @@ from pydantic import ValidationError
 from app.core.config import settings
 from app.core.enums import LLMCallStage, PersonaType
 from app.domain import grounding, slides
-from app.domain.panel import ResultadoGeracao
-from app.domain.ports import Auditoria
-from app.schemas.feedback import GeneratedQuestion
+from app.domain.panel import GenerationResult
+from app.domain.ports import Audit
+from app.schemas.feedback import QuestionResponse
 
 logger = logging.getLogger(__name__)
 
@@ -25,15 +25,15 @@ MAX_TRANSCRIPT_CHARS = 30000
 QUESTIONS_REQUESTED = 8
 
 PERSONA_BRIEFS: dict[PersonaType, str] = {
-    PersonaType.PROFESSOR_RIGOROSO: (
+    PersonaType.STRICT_PROFESSOR: (
         "um professor examinador rigoroso, que cobra precisão conceitual, "
         "questiona metodologia e aponta afirmações sem embasamento."
     ),
-    PersonaType.ORIENTADOR_ACOLHEDOR: (
+    PersonaType.SUPPORTIVE_ADVISOR: (
         "um orientador acolhedor, que faz perguntas construtivas para aprofundar "
         "o raciocínio do apresentador sem intimidá-lo."
     ),
-    PersonaType.ESPECIALISTA_TECNICO: (
+    PersonaType.TECHNICAL_EXPERT: (
         "um especialista técnico da área, que sonda detalhes de implementação, "
         "limitações e decisões de projeto."
     ),
@@ -81,15 +81,15 @@ Responda EXCLUSIVAMENTE com JSON válido, sem texto antes ou depois:
     {{
       "question": "A pergunta que a banca faria.",
       "rationale": "Por que a banca faria essa pergunta.",
-      "slide_origem": 3,
-      "trecho_literal": "trecho copiado do slide 3"
+      "slide_number": 3,
+      "quote": "trecho copiado do slide 3"
     }}
   ],
   "content_analysis": "Parágrafo curto avaliando o domínio do conteúdo, clareza e lacunas."
 }}
 
-- `slide_origem`: o número inteiro que aparece no marcador [Slide N] do slide utilizado.
-- `trecho_literal`: um trecho COPIADO EXATAMENTE desse slide, entre 15 e 400 caracteres, \
+- `slide_number`: o número inteiro que aparece no marcador [Slide N] do slide utilizado.
+- `quote`: um trecho COPIADO EXATAMENTE desse slide, entre 15 e 400 caracteres, \
 caractere por caractere, sem parafrasear, resumir, traduzir ou corrigir. É a evidência de \
 que a pergunta saiu do material: trechos reescritos são verificados e descartados \
 automaticamente, e a pergunta some junto.
@@ -116,35 +116,35 @@ def get_client() -> AsyncOpenAI:
     return _client
 
 
-class GeminiBanca:
-    """Adaptador da `BancaExaminadora` para o endpoint compatível do Gemini.
+class GeminiPanel:
+    """Adaptador do `Panel` para o endpoint compatível do Gemini.
 
     Recebe a auditoria pela porta, então este módulo depende de HTTP e do SDK `openai`,
     nunca do banco. Trocar de provedor é escrever outro adaptador com o mesmo método.
     """
 
-    def __init__(self, auditoria: Auditoria) -> None:
-        self._auditoria = auditoria
+    def __init__(self, audit: Audit) -> None:
+        self._audit = audit
 
-    async def gerar_perguntas(
+    async def generate_questions(
         self,
         slides_text: str,
         transcript: str,
         persona: PersonaType,
         presentation_id: uuid.UUID | None = None,
-    ) -> ResultadoGeracao:
-        return await _gerar_perguntas(
-            self._auditoria, slides_text, transcript, persona, presentation_id
+    ) -> GenerationResult:
+        return await _generate_questions(
+            self._audit, slides_text, transcript, persona, presentation_id
         )
 
 
-async def _gerar_perguntas(
-    auditoria: Auditoria,
+async def _generate_questions(
+    audit: Audit,
     slides_text: str,
     transcript: str,
     persona: PersonaType,
     presentation_id: uuid.UUID | None = None,
-) -> ResultadoGeracao:
+) -> GenerationResult:
     """Monta o prompt (slides + transcrição + persona) e devolve as perguntas ancoradas.
 
     Só retornam perguntas que passaram pelo `grounding`. O prompt pede o
@@ -153,24 +153,24 @@ async def _gerar_perguntas(
 
     `presentation_id` serve só para a auditoria (`LLMCall`); omiti-lo desliga o registro.
     """
-    slides_contexto, slides_truncados = _limitar_slides(slides_text or "", MAX_SLIDES_CHARS)
-    transcript_contexto, transcricao_truncada = _limitar_transcricao(
+    slides_context, slides_truncated = _limit_slides(slides_text or "", MAX_SLIDES_CHARS)
+    transcript_context, transcript_truncated = _limit_transcript(
         transcript or "", MAX_TRANSCRIPT_CHARS
     )
 
-    if slides_truncados:
+    if slides_truncated:
         logger.warning(
             "Contexto de slides truncado na sessão %s: %d de %d caracteres enviados. "
             "É este aviso, quando virar rotina, que justifica migrar para RAG.",
             presentation_id,
-            len(slides_contexto),
+            len(slides_context),
             len(slides_text or ""),
         )
-    if transcricao_truncada:
+    if transcript_truncated:
         logger.warning(
             "Transcrição truncada na sessão %s: %d de %d caracteres enviados.",
             presentation_id,
-            len(transcript_contexto),
+            len(transcript_context),
             len(transcript or ""),
         )
 
@@ -185,18 +185,18 @@ async def _gerar_perguntas(
         {
             "role": "user",
             "content": USER_PROMPT.format(
-                slides_text=slides_contexto or "(sem texto extraído)",
-                transcript=transcript_contexto or "(sem fala capturada)",
+                slides_text=slides_context or "(sem texto extraído)",
+                transcript=transcript_context or "(sem fala capturada)",
             ),
         },
     ]
 
-    async with auditoria.medir(
+    async with audit.measure(
         presentation_id=presentation_id,
-        etapa=LLMCallStage.GERACAO_PERGUNTAS,
-        modelo=settings.LLM_MODEL,
-        temperatura=settings.LLM_TEMPERATURE,
-    ) as uso:
+        stage=LLMCallStage.QUESTION_GENERATION,
+        model=settings.LLM_MODEL,
+        temperature=settings.LLM_TEMPERATURE,
+    ) as usage:
         response = await get_client().chat.completions.create(
             model=settings.LLM_MODEL,
             messages=messages,
@@ -205,35 +205,35 @@ async def _gerar_perguntas(
             # variar criativamente. Criatividade aqui se manifesta como invenção.
             temperature=settings.LLM_TEMPERATURE,
         )
-        uso.update(_extract_usage(response))
+        usage.update(_extract_usage(response))
 
     payload = _parse_payload(_extract_content(response))
-    itens = payload.get("questions") or []
+    items = payload.get("questions") or []
 
-    candidatas = _parse_questions(itens)
-    aprovadas = _aplicar_aterramento(candidatas, slides_text)
+    candidates = _parse_questions(items)
+    approved = _apply_grounding(candidates, slides_text)
 
-    if aprovadas:
-        logger.info("Aterramento: %d de %d perguntas aprovadas.", len(aprovadas), len(itens))
+    if approved:
+        logger.info("Aterramento: %d de %d perguntas aprovadas.", len(approved), len(items))
 
-    return ResultadoGeracao(
-        questions=aprovadas,
+    return GenerationResult(
+        questions=approved,
         content_analysis=payload.get("content_analysis", ""),
         # Conta o que o modelo devolveu, inclusive o que veio malformado: a taxa de
         # aterramento mede o rendimento real da chamada, não o do que sobreviveu ao parse.
-        perguntas_geradas=len(itens),
-        perguntas_aprovadas=len(aprovadas),
-        slides_truncados=slides_truncados,
-        transcricao_truncada=transcricao_truncada,
+        questions_generated=len(items),
+        questions_approved=len(approved),
+        slides_truncated=slides_truncated,
+        transcript_truncated=transcript_truncated,
     )
 
 
-def _limitar_slides(slides_text: str, limite: int) -> tuple[str, bool]:
+def _limit_slides(slides_text: str, limit: int) -> tuple[str, bool]:
     """Limita o contexto de slides SEM partir um slide no meio.
 
-    O fatiamento nu (`[:limite]`) cortava em qualquer ponto — inclusive dentro de um
+    O fatiamento nu (`[:limit]`) cortava em qualquer ponto — inclusive dentro de um
     bloco. Um slide pela metade no prompt é pior que um slide ausente: o modelo cita o
-    que viu, o aterramento valida contra o slide inteiro, e um `trecho_literal` honesto
+    que viu, o aterramento valida contra o slide inteiro, e um `quote` honesto
     da parte cortada seria aprovado — mas o inverso (pergunta sobre a metade visível com
     trecho completado de memória) seria reprovado sem o modelo ter como saber. Slide
     entra inteiro ou não entra.
@@ -241,36 +241,36 @@ def _limitar_slides(slides_text: str, limite: int) -> tuple[str, bool]:
     Degenerado: um único slide maior que o limite inteiro volta ao fatiamento nu — menos
     contexto seria contexto nenhum.
     """
-    if len(slides_text) <= limite:
+    if len(slides_text) <= limit:
         return slides_text, False
 
-    blocos: list[str] = []
+    blocks: list[str] = []
     total = 0
-    for numero, conteudo in sorted(slides.parse(slides_text).items()):
-        bloco = slides.bloco(numero, conteudo)
-        custo = len(bloco) + (len(slides.SEPARADOR) if blocos else 0)
-        if total + custo > limite:
+    for number, content in sorted(slides.parse(slides_text).items()):
+        block = slides.block(number, content)
+        cost = len(block) + (len(slides.SEPARATOR) if blocks else 0)
+        if total + cost > limit:
             break
-        blocos.append(bloco)
-        total += custo
+        blocks.append(block)
+        total += cost
 
-    if not blocos:
-        return slides_text[:limite], True
+    if not blocks:
+        return slides_text[:limit], True
 
-    return slides.SEPARADOR.join(blocos), True
+    return slides.SEPARATOR.join(blocks), True
 
 
-def _limitar_transcricao(transcript: str, limite: int) -> tuple[str, bool]:
+def _limit_transcript(transcript: str, limit: int) -> tuple[str, bool]:
     """Limita a transcrição cortando em espaço, não no meio de uma palavra.
 
     Meia palavra no fim do contexto é convite para o modelo completá-la de memória —
     exatamente a fonte de fato que o prompt proíbe.
     """
-    if len(transcript) <= limite:
+    if len(transcript) <= limit:
         return transcript, False
 
-    corte = transcript.rfind(" ", 0, limite)
-    return transcript[: corte if corte > 0 else limite].rstrip(), True
+    cut = transcript.rfind(" ", 0, limit)
+    return transcript[: cut if cut > 0 else limit].rstrip(), True
 
 
 def _extract_usage(response) -> dict[str, int | None]:
@@ -279,12 +279,12 @@ def _extract_usage(response) -> dict[str, int | None]:
     Tolerante porque o endpoint compatível do Gemini não garante preencher `usage` — e
     perder a contagem de uma chamada não pode custar as perguntas dela.
     """
-    uso = getattr(response, "usage", None)
-    if uso is None:
-        return {"tokens_entrada": None, "tokens_saida": None}
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return {"input_tokens": None, "output_tokens": None}
     return {
-        "tokens_entrada": getattr(uso, "prompt_tokens", None),
-        "tokens_saida": getattr(uso, "completion_tokens", None),
+        "input_tokens": getattr(usage, "prompt_tokens", None),
+        "output_tokens": getattr(usage, "completion_tokens", None),
     }
 
 
@@ -333,43 +333,41 @@ def _parse_payload(content: str | None) -> dict:
     return payload
 
 
-def _parse_questions(itens: list) -> list[GeneratedQuestion]:
+def _parse_questions(items: list) -> list[QuestionResponse]:
     """Converte os itens do JSON em perguntas, descartando os malformados.
 
-    Um item fora do contrato (sem `trecho_literal`, com `slide_origem` textual) não pode
+    Um item fora do contrato (sem `quote`, com `slide_number` textual) não pode
     derrubar as perguntas válidas que vieram na mesma resposta — o custo de uma chamada
     inteira ao LLM é alto demais para se perder por causa de um item.
     """
-    perguntas: list[GeneratedQuestion] = []
+    questions: list[QuestionResponse] = []
 
-    for item in itens:
+    for item in items:
         try:
-            perguntas.append(GeneratedQuestion(**item))
+            questions.append(QuestionResponse(**item))
         except (ValidationError, TypeError) as exc:
             logger.warning("Pergunta descartada por formato inválido (%s): %r", exc, item)
 
-    return perguntas
+    return questions
 
 
-def _aplicar_aterramento(
-    perguntas: list[GeneratedQuestion], slides_text: str
-) -> list[GeneratedQuestion]:
+def _apply_grounding(questions: list[QuestionResponse], slides_text: str) -> list[QuestionResponse]:
     """Mantém apenas as perguntas comprovadamente ancoradas em um trecho dos slides."""
-    slides_por_numero = slides.parse(slides_text or "")
-    aprovadas: list[GeneratedQuestion] = []
+    slides_by_number = slides.parse(slides_text or "")
+    approved: list[QuestionResponse] = []
 
-    for pergunta in perguntas:
-        aprovada, motivo = grounding.validar(
-            pergunta, slides_por_numero, settings.GROUNDING_MIN_SCORE
+    for question in questions:
+        is_approved, reason = grounding.validate(
+            question, slides_by_number, settings.GROUNDING_MIN_SCORE
         )
-        if aprovada:
-            aprovadas.append(pergunta)
+        if is_approved:
+            approved.append(question)
         else:
             logger.warning(
                 "Pergunta rejeitada no aterramento (%s | slide %s): %s",
-                motivo,
-                pergunta.slide_origem,
-                pergunta.question,
+                reason,
+                question.slide_number,
+                question.question,
             )
 
-    return aprovadas
+    return approved

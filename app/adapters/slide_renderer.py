@@ -21,74 +21,74 @@ from app.models.presentation import Presentation
 
 logger = logging.getLogger(__name__)
 
-LARGURA_PADRAO = 1600
-LARGURA_MINIMA = 320
+DEFAULT_WIDTH = 1600
+MIN_WIDTH = 320
 # Acima disto a textura passa do que o Quest aloca com folga para dois slides vizinhos.
-LARGURA_MAXIMA = 2560
+MAX_WIDTH = 2560
 
-MOTIVO_PPTX = (
+PPTX_REASON = (
     "O servidor renderiza apenas PDF. Exporte a apresentação como PDF para vê-la na "
     "tela da sala; a análise de conteúdo funciona com os dois formatos."
 )
 
 
-class PaginaInexistenteError(LookupError):
+class PageNotFoundError(LookupError):
     """Pediram uma página fora da apresentação."""
 
 
-def renderizavel(presentation: Presentation) -> bool:
+def is_renderable(presentation: Presentation) -> bool:
     return presentation.file_type is SourceFileType.PDF
 
 
-def motivo_de_nao_renderizar(presentation: Presentation) -> str | None:
-    return None if renderizavel(presentation) else MOTIVO_PPTX
+def unrenderable_reason(presentation: Presentation) -> str | None:
+    return None if is_renderable(presentation) else PPTX_REASON
 
 
-def contar_paginas(pdf_path: Path | str) -> int:
-    with fitz.open(str(pdf_path)) as documento:
-        return documento.page_count
+def count_pages(pdf_path: Path | str) -> int:
+    with fitz.open(str(pdf_path)) as document:
+        return document.page_count
 
 
-def largura_valida(largura: int | None) -> int:
+def clamp_width(width: int | None) -> int:
     """Encaixa o pedido do cliente entre o mínimo legível e o teto de memória."""
-    if largura is None:
-        return LARGURA_PADRAO
-    return max(LARGURA_MINIMA, min(LARGURA_MAXIMA, largura))
+    if width is None:
+        return DEFAULT_WIDTH
+    return max(MIN_WIDTH, min(MAX_WIDTH, width))
 
 
-def renderizar_pagina(pdf_path: Path | str, numero: int, largura: int) -> bytes:
-    """PNG da página `numero` (base 1) com `largura` pixels de largura.
+def render_page(pdf_path: Path | str, number: int, width: int) -> bytes:
+    """PNG da página `number` (base 1) com `width` pixels de largura.
 
     A altura sai da proporção da página: forçar 16:9 num deck 4:3 achataria a letra, e
     slide ilegível na parede é o mesmo que parede vazia.
     """
-    with fitz.open(str(pdf_path)) as documento:
-        if numero < 1 or numero > documento.page_count:
-            raise PaginaInexistenteError(
-                f"A apresentação tem {documento.page_count} página(s); não existe a {numero}."
+    with fitz.open(str(pdf_path)) as document:
+        if number < 1 or number > document.page_count:
+            raise PageNotFoundError(
+                f"A apresentação tem {document.page_count} página(s); não existe a {number}."
             )
 
-        pagina = documento[numero - 1]
-        escala = largura / pagina.rect.width
-        pixmap = pagina.get_pixmap(matrix=fitz.Matrix(escala, escala), alpha=False)
+        page = document[number - 1]
+        scale = width / page.rect.width
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
         return pixmap.tobytes("png")
 
 
-def pagina_em_cache(presentation: Presentation, numero: int, largura: int) -> bytes:
+def cached_page(presentation: Presentation, number: int, width: int) -> bytes:
     """Renderiza uma vez por (página, largura) e reaproveita nas trocas de slide seguintes.
 
     Voltar ao slide anterior é o gesto mais comum de quem apresenta; renderizar de novo
     a cada volta gastaria CPU do servidor por nada. O cache mora na pasta da sessão, então
     a limpeza de retenção o leva junto com o PDF.
     """
-    pasta = storage.session_dir(presentation.id) / "slides"
-    pasta.mkdir(parents=True, exist_ok=True)
-    arquivo = pasta / f"slide_{numero:03d}_{largura}.png"
+    folder = storage.session_dir(presentation.id) / "slides"
+    folder.mkdir(parents=True, exist_ok=True)
+    file = folder / f"slide_{number:03d}_{width}.png"
 
-    if arquivo.exists():
-        return arquivo.read_bytes()
+    if file.exists():
+        return file.read_bytes()
 
-    imagem = renderizar_pagina(presentation.file_path, numero, largura)
-    arquivo.write_bytes(imagem)
-    logger.debug("Slide %d da sessão %s renderizado (%d px).", numero, presentation.id, largura)
-    return imagem
+    image = render_page(presentation.file_path, number, width)
+    file.write_bytes(image)
+    logger.debug("Slide %d da sessão %s renderizado (%d px).", number, presentation.id, width)
+    return image

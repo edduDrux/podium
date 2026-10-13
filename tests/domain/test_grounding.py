@@ -5,7 +5,7 @@ participantes" num trecho copiado dá `partial_ratio` 96.2 e passava em qualquer
 """
 
 from app.domain import grounding
-from app.schemas.feedback import GeneratedQuestion
+from app.schemas.feedback import QuestionResponse
 
 MIN_SCORE = 90
 
@@ -15,33 +15,33 @@ SLIDES = {
 }
 
 
-def _pergunta(
-    trecho: str,
+def _question(
+    quote: str,
     slide: int = 1,
     question: str = "Como os participantes foram selecionados?",
-) -> GeneratedQuestion:
-    return GeneratedQuestion(question=question, slide_origem=slide, trecho_literal=trecho)
+) -> QuestionResponse:
+    return QuestionResponse(question=question, slide_number=slide, quote=quote)
 
 
-def test_trecho_honesto_aprova():
-    aprovada, motivo = grounding.validar(
-        _pergunta("O estudo contou com 12 participantes em 2024."), SLIDES, MIN_SCORE
+def test_honest_quote_is_approved():
+    is_approved, reason = grounding.validate(
+        _question("O estudo contou com 12 participantes em 2024."), SLIDES, MIN_SCORE
     )
-    assert aprovada and motivo is None
+    assert is_approved and reason is None
 
 
-def test_numero_trocado_reprova():
-    aprovada, motivo = grounding.validar(
-        _pergunta("O estudo contou com 40 participantes em 2024."), SLIDES, MIN_SCORE
+def test_changed_number_is_rejected():
+    is_approved, reason = grounding.validate(
+        _question("O estudo contou com 40 participantes em 2024."), SLIDES, MIN_SCORE
     )
-    assert not aprovada
-    assert motivo == "NUMERO_NAO_ENCONTRADO"
+    assert not is_approved
+    assert reason == "NUMERO_NAO_ENCONTRADO"
 
 
-def test_separador_de_milhar_nao_gera_falso_negativo():
+def test_thousands_separator_is_not_a_false_negative():
     """O LLM copiar "1.000" como "1000" é diferença cosmética, não alucinação."""
-    aprovada, motivo = grounding.validar(
-        _pergunta(
+    is_approved, reason = grounding.validate(
+        _question(
             "Foram investidos 1000 reais no projeto piloto.",
             slide=2,
             question="Por que esse valor foi suficiente para o piloto?",
@@ -49,37 +49,37 @@ def test_separador_de_milhar_nao_gera_falso_negativo():
         SLIDES,
         MIN_SCORE,
     )
-    assert aprovada and motivo is None
+    assert is_approved and reason is None
 
 
-def test_slide_inexistente_reprova():
-    aprovada, motivo = grounding.validar(
-        _pergunta("O estudo contou com 12 participantes em 2024.", slide=99),
+def test_unknown_slide_is_rejected():
+    is_approved, reason = grounding.validate(
+        _question("O estudo contou com 12 participantes em 2024.", slide=99),
         SLIDES,
         MIN_SCORE,
     )
-    assert not aprovada
-    assert motivo == "SLIDE_INEXISTENTE"
+    assert not is_approved
+    assert reason == "SLIDE_INEXISTENTE"
 
 
-def test_trecho_parafraseado_reprova():
-    aprovada, motivo = grounding.validar(
-        _pergunta("A pesquisa envolveu uma dúzia de pessoas voluntárias."),
+def test_paraphrased_quote_is_rejected():
+    is_approved, reason = grounding.validate(
+        _question("A pesquisa envolveu uma dúzia de pessoas voluntárias."),
         SLIDES,
         MIN_SCORE,
     )
-    assert not aprovada
-    assert motivo == "TRECHO_NAO_LITERAL"
+    assert not is_approved
+    assert reason == "TRECHO_NAO_LITERAL"
 
 
-def test_pergunta_que_copia_o_slide_reprova():
-    aprovada, motivo = grounding.validar(
-        _pergunta(
+def test_question_that_copies_the_slide_is_rejected():
+    is_approved, reason = grounding.validate(
+        _question(
             "O estudo contou com 12 participantes em 2024.",
             question="O estudo contou com 12 participantes em 2024?",
         ),
         SLIDES,
         MIN_SCORE,
     )
-    assert not aprovada
-    assert motivo == "PERGUNTA_TRIVIAL"
+    assert not is_approved
+    assert reason == "PERGUNTA_TRIVIAL"

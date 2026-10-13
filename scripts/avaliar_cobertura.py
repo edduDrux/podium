@@ -24,39 +24,39 @@ def main() -> int:
         print("Uso: python -m scripts.avaliar_cobertura <arquivo.pdf|pptx> <transcricao.txt>")
         return 2
 
-    caminho = Path(sys.argv[1])
-    transcricao_path = Path(sys.argv[2])
-    for arquivo in (caminho, transcricao_path):
-        if not arquivo.is_file():
-            print(f"Arquivo não encontrado: {arquivo}")
+    path = Path(sys.argv[1])
+    transcript_path = Path(sys.argv[2])
+    for file in (path, transcript_path):
+        if not file.is_file():
+            print(f"Arquivo não encontrado: {file}")
             return 2
 
-    file_type = presentation_files.detect_type(caminho.name, content_type=None)
+    file_type = presentation_files.detect_type(path.name, content_type=None)
     if file_type is None:
-        print(f"Formato não suportado: {caminho.suffix} (apenas .pdf e .pptx).")
+        print(f"Formato não suportado: {path.suffix} (apenas .pdf e .pptx).")
         return 2
 
-    texto = presentation_files.extract_text(caminho, file_type)
-    transcript = transcricao_path.read_text(encoding="utf-8")
+    text = presentation_files.extract_text(path, file_type)
+    transcript = transcript_path.read_text(encoding="utf-8")
 
     # Os mesmos limiares que o pipeline usa (config.py), para o resultado daqui ser
     # comparável ao de uma sessão real.
-    resultado = coverage.avaliar(
-        slides.parse(texto),
+    result = coverage.evaluate(
+        slides.parse(text),
         transcript,
-        limiar_apresentado=settings.COVERAGE_FULL_THRESHOLD,
-        limiar_parcial=settings.COVERAGE_PARTIAL_THRESHOLD,
-        limiar_alerta=settings.COVERAGE_ALERT_THRESHOLD,
+        presented_threshold=settings.COVERAGE_FULL_THRESHOLD,
+        partial_threshold=settings.COVERAGE_PARTIAL_THRESHOLD,
+        alert_threshold=settings.COVERAGE_ALERT_THRESHOLD,
     )
 
-    for avaliacao in resultado.slides:
-        score = "—" if avaliacao.score is None else f"{avaliacao.score:.0%}"
-        print(f"[Slide {avaliacao.numero}] {avaliacao.classificacao} ({score})")
-        if avaliacao.termos_ausentes:
-            print(f"    faltou dizer: {', '.join(avaliacao.termos_ausentes)}")
+    for verdict in result.slides:
+        score = "—" if verdict.score is None else f"{verdict.score:.0%}"
+        print(f"[Slide {verdict.slide_number}] {verdict.classification} ({score})")
+        if verdict.missing_terms:
+            print(f"    faltou dizer: {', '.join(verdict.missing_terms)}")
 
-    print(f"\ncobertura global    : {resultado.percentual_coberto:.0%}")
-    print(f"alerta descolamento : {'SIM' if resultado.alerta_descolamento else 'não'}")
+    print(f"\ncobertura global    : {result.coverage_ratio:.0%}")
+    print(f"alerta descolamento : {'SIM' if result.mismatch_alert else 'não'}")
     return 0
 
 

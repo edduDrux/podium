@@ -4,34 +4,34 @@ Os exemplos com emoji no meio de palavra vêm de uma sessão real medida (CLAUDE
 o Gemini inseriu 18 emojis transcrevendo uma fala sobre comida.
 """
 
-from app.domain.text import EMOJI_RE, limpar_transcricao
+from app.domain.text import EMOJI_RE, clean_transcript
 
-EXEMPLOS_REAIS = ["na vés 🥣 pera", "ceb 🥩 ola", "a lingui 🍊 na"]
-
-
-def test_exemplos_reais_ficam_sem_emoji_e_sem_espaco_duplo():
-    for texto in EXEMPLOS_REAIS:
-        limpo = limpar_transcricao(texto)
-        assert EMOJI_RE.search(limpo) is None
-        assert "  " not in limpo
+REAL_EXAMPLES = ["na vés 🥣 pera", "ceb 🥩 ola", "a lingui 🍊 na"]
 
 
-def test_emoji_colado_recola_a_palavra():
-    assert limpar_transcricao("ceb🥩ola") == "cebola"
+def test_real_examples_lose_emoji_and_double_spaces():
+    for text in REAL_EXAMPLES:
+        clean = clean_transcript(text)
+        assert EMOJI_RE.search(clean) is None
+        assert "  " not in clean
 
 
-def test_sequencia_composta_some_inteira():
+def test_emoji_glued_to_letters_rejoins_the_word():
+    assert clean_transcript("ceb🥩ola") == "cebola"
+
+
+def test_composed_sequence_disappears_entirely():
     """Emoji composto por ZWJ não pode deixar resíduo invisível no texto."""
-    assert limpar_transcricao("texto 👨‍💻 limpo") == "texto limpo"
+    assert clean_transcript("texto 👨‍💻 limpo") == "texto limpo"
 
 
-def test_contagem_de_palavras_do_emoji_entre_palavras():
+def test_word_count_with_emoji_between_words():
     """Emoji entre duas palavras legítimas sai sem colá-las."""
-    limpo = limpar_transcricao("comi feijoada 🍲 ontem à noite")
-    assert limpo == "comi feijoada ontem à noite"
-    assert len(limpo.split()) == 5
+    clean = clean_transcript("comi feijoada 🍲 ontem à noite")
+    assert clean == "comi feijoada ontem à noite"
+    assert len(clean.split()) == 5
 
 
-def test_texto_limpo_passa_intacto():
-    texto = "A metodologia seguiu três etapas, com 12 participantes."
-    assert limpar_transcricao(texto) == texto
+def test_clean_text_passes_intact():
+    text = "A metodologia seguiu três etapas, com 12 participantes."
+    assert clean_transcript(text) == text

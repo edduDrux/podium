@@ -1,6 +1,6 @@
 """Transcrição vinda do Cliente VR: registro, limpeza e efeito no pipeline.
 
-Sem banco: `registrar` só altera os modelos, e o `run_pipeline` roda com os mesmos dublês
+Sem banco: `register` só altera os modelos, e o `run_pipeline` roda com os mesmos dublês
 de `test_analysis_service.py`. O que se prova é que a transcrição do headset é tratada
 como qualquer transcrição existente — o STT do servidor não é chamado — e que a origem
 sobrevive ao pipeline até a resposta da API.
@@ -13,46 +13,46 @@ import pytest
 from app.adapters import audio
 from app.core.enums import PersonaType, PresentationStatus
 from app.domain import slides
-from app.domain.panel import ResultadoGeracao
+from app.domain.panel import GenerationResult
 from app.models.feedback import Feedback
 from app.models.presentation import Presentation
-from app.schemas.feedback import SpeechMetrics
+from app.schemas.feedback import DeliveryMetricsResponse
 from app.services import analysis_service, transcript_service
 
-SLIDES_TEXT = slides.montar([slides.bloco(1, "A metodologia experimental adotada")])
+SLIDES_TEXT = slides.assemble([slides.block(1, "A metodologia experimental adotada")])
 
 
-class BancoFalso:
-    def add(self, instancia) -> None:
+class FakeDatabase:
+    def add(self, instance) -> None:
         pass
 
     async def commit(self) -> None:
         pass
 
 
-class TranscritorEspiao:
+class SpyTranscriber:
     def __init__(self) -> None:
-        self.chamadas = 0
+        self.calls = 0
 
-    async def transcrever(self, audio_path, language="pt", presentation_id=None) -> str:
-        self.chamadas += 1
+    async def transcribe(self, audio_path, language="pt", presentation_id=None) -> str:
+        self.calls += 1
         return "transcrição do servidor"
 
 
-class BancaFalsa:
-    async def gerar_perguntas(
+class FakePanel:
+    async def generate_questions(
         self, slides_text, transcript, persona, presentation_id=None
-    ) -> ResultadoGeracao:
-        return ResultadoGeracao([], "", 0, 0)
+    ) -> GenerationResult:
+        return GenerationResult([], "", 0, 0)
 
 
 @pytest.fixture(autouse=True)
-def audio_dublado(monkeypatch):
-    monkeypatch.setattr(audio, "normalize_for_stt", lambda caminho: caminho)
+def stubbed_audio(monkeypatch):
+    monkeypatch.setattr(audio, "normalize_for_stt", lambda path: path)
     monkeypatch.setattr(
         audio,
-        "analyze_form",
-        lambda caminho, transcript: SpeechMetrics(
+        "analyze_delivery",
+        lambda path, transcript: DeliveryMetricsResponse(
             duration_seconds=60.0, speech_seconds=50.0, word_count=len(transcript.split())
         ),
     )
@@ -62,7 +62,7 @@ def audio_dublado(monkeypatch):
 def presentation() -> Presentation:
     return Presentation(
         id=uuid.uuid4(),
-        persona=PersonaType.PROFESSOR_RIGOROSO,
+        persona=PersonaType.STRICT_PROFESSOR,
         status=PresentationStatus.AUDIO_RECEIVED,
         file_path="/tmp/apresentacao.pdf",
         file_filename="apresentacao.pdf",
@@ -71,88 +71,88 @@ def presentation() -> Presentation:
     )
 
 
-def test_registrar_guarda_texto_limpo_e_origem(presentation):
-    feedback = transcript_service.registrar(
+def test_register_stores_clean_text_and_origin(presentation):
+    feedback = transcript_service.register(
         presentation, "  falei sobre a metodologia 🥩 experimental  ", "whisper.cpp base"
     )
 
     assert presentation.feedback is feedback
     assert feedback.transcript == "falei sobre a metodologia experimental"
-    assert transcript_service.origem_registrada(feedback) == {
+    assert transcript_service.recorded_origin(feedback) == {
         "origem": "cliente_vr",
         "motor": "whisper.cpp base",
     }
 
 
-def test_registrar_substitui_a_transcricao_anterior_sem_perder_o_feedback(presentation):
+def test_register_replaces_previous_transcript_keeping_the_feedback(presentation):
     """Reenviar depois de corrigir a fala troca só o texto; o objeto Feedback é o mesmo."""
-    anterior = Feedback(presentation_id=presentation.id, transcript="versão velha")
-    presentation.feedback = anterior
+    previous = Feedback(presentation_id=presentation.id, transcript="versão velha")
+    presentation.feedback = previous
 
-    feedback = transcript_service.registrar(presentation, "versão nova", None)
+    feedback = transcript_service.register(presentation, "versão nova", None)
 
-    assert feedback is anterior
+    assert feedback is previous
     assert feedback.transcript == "versão nova"
-    assert transcript_service.origem_registrada(feedback)["motor"] is None
+    assert transcript_service.recorded_origin(feedback)["motor"] is None
 
 
-@pytest.mark.parametrize("texto", ["", "   ", "🥩 🍲"])
-def test_registrar_recusa_transcricao_sem_palavras(presentation, texto):
-    with pytest.raises(transcript_service.TranscricaoVaziaError):
-        transcript_service.registrar(presentation, texto, "whisper")
+@pytest.mark.parametrize("text", ["", "   ", "🥩 🍲"])
+def test_register_rejects_transcript_without_words(presentation, text):
+    with pytest.raises(transcript_service.EmptyTranscriptError):
+        transcript_service.register(presentation, text, "whisper")
 
     assert presentation.feedback is None
 
 
-def test_origem_tolera_feedback_antigo():
-    assert transcript_service.origem_registrada(None) is None
-    assert transcript_service.origem_registrada(Feedback(metrics={})) is None
-    assert transcript_service.origem_registrada(Feedback(metrics={"transcricao": "x"})) is None
+def test_origin_tolerates_old_feedback():
+    assert transcript_service.recorded_origin(None) is None
+    assert transcript_service.recorded_origin(Feedback(metrics={})) is None
+    assert transcript_service.recorded_origin(Feedback(metrics={"transcricao": "x"})) is None
 
 
-def test_rotulo():
-    assert transcript_service.rotulo(None) is None
-    assert transcript_service.rotulo({"origem": "servidor", "motor": None}) == "servidor"
+def test_label():
+    assert transcript_service.label(None) is None
+    assert transcript_service.label({"origem": "servidor", "motor": None}) == "servidor"
     assert (
-        transcript_service.rotulo({"origem": "cliente_vr", "motor": "whisper base"})
+        transcript_service.label({"origem": "cliente_vr", "motor": "whisper base"})
         == "cliente_vr (whisper base)"
     )
 
 
 @pytest.mark.asyncio
-async def test_pipeline_usa_a_transcricao_do_cliente_e_nao_chama_o_stt(presentation):
-    transcript_service.registrar(presentation, "falei da metodologia experimental", "whisper")
-    espiao = TranscritorEspiao()
+async def test_pipeline_uses_the_client_transcript_and_skips_stt(presentation):
+    transcript_service.register(presentation, "falei da metodologia experimental", "whisper")
+    spy = SpyTranscriber()
 
-    resposta = await analysis_service.run_pipeline(BancoFalso(), presentation, espiao, BancaFalsa())
+    response = await analysis_service.run_pipeline(FakeDatabase(), presentation, spy, FakePanel())
 
-    assert espiao.chamadas == 0
-    assert resposta.transcript == "falei da metodologia experimental"
-    assert resposta.transcript_source == "cliente_vr (whisper)"
+    assert spy.calls == 0
+    assert response.transcript == "falei da metodologia experimental"
+    assert response.transcript_source == "cliente_vr (whisper)"
     # A origem sobrevive à regravação das métricas pelo pipeline...
-    assert transcript_service.origem_registrada(presentation.feedback)["origem"] == "cliente_vr"
+    assert transcript_service.recorded_origin(presentation.feedback)["origem"] == "cliente_vr"
     # ...sem contaminar as métricas de forma do contrato.
-    assert resposta.metrics.word_count == 4
+    assert response.delivery_metrics.word_count == 4
 
 
 @pytest.mark.asyncio
-async def test_pipeline_registra_o_servidor_como_origem_quando_o_stt_roda(presentation):
-    espiao = TranscritorEspiao()
+async def test_pipeline_records_the_server_as_origin_when_stt_runs(presentation):
+    spy = SpyTranscriber()
 
-    resposta = await analysis_service.run_pipeline(BancoFalso(), presentation, espiao, BancaFalsa())
+    response = await analysis_service.run_pipeline(FakeDatabase(), presentation, spy, FakePanel())
 
-    assert espiao.chamadas == 1
-    assert resposta.transcript_source.startswith("servidor")
+    assert spy.calls == 1
+    assert response.transcript_source.startswith("servidor")
 
 
-def test_to_response_expoe_a_origem_persistida(presentation):
+def test_to_response_exposes_the_stored_origin(presentation):
     presentation.feedback = Feedback(
         presentation_id=presentation.id,
         transcript="texto",
         metrics={"word_count": 1, "transcricao": {"origem": "cliente_vr", "motor": "w"}},
     )
 
-    resposta = analysis_service.to_response(presentation)
+    response = analysis_service.to_response(presentation)
 
-    assert resposta.transcript_source == "cliente_vr (w)"
-    assert resposta.metrics.word_count == 1
+    assert response.transcript_source == "cliente_vr (w)"
+    assert response.delivery_metrics.word_count == 1

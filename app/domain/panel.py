@@ -7,10 +7,10 @@ trocar de provedor não pode mudar o formato do que a orquestração recebe. É 
 
 from typing import NamedTuple
 
-from app.schemas.feedback import GeneratedQuestion
+from app.schemas.feedback import QuestionResponse
 
 
-class ResultadoGeracao(NamedTuple):
+class GenerationResult(NamedTuple):
     """Perguntas já filtradas pelo aterramento, mais o placar do processo.
 
     Carrega as contagens junto das perguntas porque `questions` sozinho não distingue
@@ -18,12 +18,12 @@ class ResultadoGeracao(NamedTuple):
     e essa diferença é justamente o que se quer medir no capítulo de validação.
     """
 
-    questions: list[GeneratedQuestion]
+    questions: list[QuestionResponse]
     content_analysis: str
-    perguntas_geradas: int
-    perguntas_aprovadas: int
+    questions_generated: int
+    questions_approved: int
     # O contexto enviado ao modelo coube inteiro? Quando um destes liga, o feedback saiu
     # de material incompleto — e é a frequência disso, medida em sessões reais, que decide
     # se RAG/pgvector entra no projeto (CLAUDE.md §6) ou continua complexidade evitada.
-    slides_truncados: bool = False
-    transcricao_truncada: bool = False
+    slides_truncated: bool = False
+    transcript_truncated: bool = False

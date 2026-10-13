@@ -3,10 +3,10 @@ import uuid
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 
-class GeneratedQuestion(BaseModel):
+class QuestionResponse(BaseModel):
     """Pergunta inédita formulada pela banca com base no conteúdo apresentado.
 
-    `slide_origem` e `trecho_literal` são obrigatórios porque são a âncora de evidência
+    `slide_number` e `quote` são obrigatórios porque são a âncora de evidência
     do sistema: sem apontar o slide e copiar o trecho que sustenta a pergunta, não há
     como distinguir uma pergunta ancorada no material de uma alucinação do modelo.
     O limite de 15 caracteres descarta trechos curtos demais para comprovar qualquer
@@ -15,47 +15,47 @@ class GeneratedQuestion(BaseModel):
 
     question: str
     rationale: str | None = Field(default=None, description="Por que a banca faria essa pergunta.")
-    slide_origem: int = Field(
+    slide_number: int = Field(
         description="Número do slide que originou a pergunta (marcador [Slide N])."
     )
-    trecho_literal: str = Field(
+    quote: str = Field(
         min_length=15,
         max_length=400,
         description="Trecho copiado literalmente do slide que sustenta a pergunta.",
     )
 
 
-class SlideCoverage(BaseModel):
+class SlideCoverageResponse(BaseModel):
     """Veredicto de cobertura de UM slide, com a evidência que o sustenta."""
 
-    numero: int
+    slide_number: int
     # apresentado | parcial | nao_apresentado | sem_termos
-    classificacao: str
+    classification: str
     # None quando o slide não tem termos mensuráveis (sem_termos).
     score: float | None = None
-    termos_totais: int = 0
-    termos_presentes: int = 0
+    total_terms: int = 0
+    present_terms: int = 0
     # O que estava no material e não apareceu na fala — a resposta auditável a
     # "o que você preparou mas não apresentou?".
-    termos_ausentes: list[str] = Field(default_factory=list)
+    missing_terms: list[str] = Field(default_factory=list)
 
 
-class SlideCoverageReport(BaseModel):
+class CoverageReportResponse(BaseModel):
     """Cruzamento material × transcrição — o diferencial do PODIUM sobre o estado da arte.
 
     Calculado por sobreposição léxica determinística, nunca pelo LLM: o modelo não é
     juiz do próprio desempenho (mesmo princípio do aterramento).
     """
 
-    slides: list[SlideCoverage] = Field(default_factory=list)
+    slides: list[SlideCoverageResponse] = Field(default_factory=list)
     # Termos presentes ÷ termos totais, agregado de todos os slides.
-    percentual_coberto: float = 0.0
+    coverage_ratio: float = 0.0
     # Material e fala descolados (o caso do teste adversarial: 100% do material ficou
     # por apresentar).
-    alerta_descolamento: bool = False
+    mismatch_alert: bool = False
 
 
-class SpeechMetrics(BaseModel):
+class DeliveryMetricsResponse(BaseModel):
     """Avaliação de FORMA — derivada do áudio e da transcrição."""
 
     # Duração real do arquivo de áudio.
@@ -78,26 +78,26 @@ class FeedbackResponse(BaseModel):
 
     session_id: uuid.UUID
     transcript: str | None = None
-    questions: list[GeneratedQuestion] = Field(default_factory=list)
+    questions: list[QuestionResponse] = Field(default_factory=list)
     content_analysis: str | None = None
-    metrics: SpeechMetrics = Field(default_factory=SpeechMetrics)
+    delivery_metrics: DeliveryMetricsResponse = Field(default_factory=DeliveryMetricsResponse)
 
     # Transparência do aterramento: quantas perguntas o LLM produziu e quantas
     # sobreviveram à validação. Expor a diferença permite auditar o quanto o modelo
     # tende a extrapolar o material — dado de validação técnica, não enfeite.
-    perguntas_geradas: int = 0
-    perguntas_aprovadas: int = 0
+    questions_generated: int = 0
+    questions_approved: int = 0
 
     # Transparência do contexto: o material coube inteiro no prompt? Um feedback gerado
     # sobre contexto cortado não é inválido, mas precisa se declarar — e a frequência
     # destes flags em sessões reais é o critério registrado para adotar (ou seguir
     # dispensando) RAG no projeto.
-    slides_truncados: bool = False
-    transcricao_truncada: bool = False
+    slides_truncated: bool = False
+    transcript_truncated: bool = False
 
     # None em feedback anterior à cobertura de slides — ausência de medição não é
     # medição zerada.
-    slide_coverage: SlideCoverageReport | None = None
+    slide_coverage: CoverageReportResponse | None = None
 
     # Quem produziu a transcrição: `servidor (gemini-3.5-flash)` quando o STT rodou aqui,
     # `cliente_vr (whisper.cpp ...)` quando o headset a entregou pronta. Importa para o
@@ -108,12 +108,12 @@ class FeedbackResponse(BaseModel):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
-    def taxa_aterramento(self) -> float:
+    def grounding_rate(self) -> float:
         """Proporção de perguntas aprovadas sobre as geradas.
 
         É derivada em vez de armazenada para que nunca possa divergir das contagens
         que a originaram, venham elas do pipeline ou do feedback já persistido.
         """
-        if self.perguntas_geradas <= 0:
+        if self.questions_generated <= 0:
             return 0.0
-        return round(self.perguntas_aprovadas / self.perguntas_geradas, 4)
+        return round(self.questions_approved / self.questions_generated, 4)

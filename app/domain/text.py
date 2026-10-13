@@ -6,7 +6,7 @@ texto extraído com texto transcrito, e duas normalizações independentes diver
 detalhe (um acento, uma aspa tipográfica) produziriam veredictos incoerentes entre as
 duas camadas — o mesmo risco que o contrato do marcador corria antes de `domain/slides`.
 
-A limpeza da transcrição (`limpar_transcricao`) também mora aqui. Ela vivia no adaptador
+A limpeza da transcrição (`clean_transcript`) também mora aqui. Ela vivia no adaptador
 do Gemini, mas é regra sobre o texto, não sobre o provedor: vale igual para o STT do
 servidor e para a transcrição feita no headset.
 """
@@ -14,8 +14,8 @@ servidor e para a transcrição feita no headset.
 import re
 import unicodedata
 
-PONTUACAO_RE = re.compile(r"[^\w\s]", re.UNICODE)
-ESPACOS_RE = re.compile(r"\s+")
+PUNCTUATION_RE = re.compile(r"[^\w\s]", re.UNICODE)
+WHITESPACE_RE = re.compile(r"\s+")
 
 # Faixas de emoji e pictogramas que o Gemini já inseriu em transcrição real (medido:
 # 18 emojis numa sessão, vários no MEIO de palavras — "ceb 🥩 ola"). A instrução no
@@ -33,26 +33,26 @@ EMOJI_RE = re.compile(
     "\\uFE0E\\uFE0F"  # seletores de variação
     "]"
 )
-_ESPACOS_RE = re.compile(r"[ \t]{2,}")
+_SPACES_RE = re.compile(r"[ \t]{2,}")
 
 
-def normalizar(texto: str) -> str:
+def normalize(text: str) -> str:
     """Reduz o texto ao que importa na comparação: minúsculas, sem acento, sem pontuação.
 
     Essas diferenças são cosméticas e aparecem só por causa da extração (o PDF pode trazer
     aspas tipográficas, o PPTx não). Mantê-las produziria falso negativo — trecho copiado
     corretamente sendo reprovado por um travessão diferente.
     """
-    sem_acento = "".join(
-        caractere
-        for caractere in unicodedata.normalize("NFKD", texto or "")
-        if not unicodedata.combining(caractere)
+    without_accents = "".join(
+        char
+        for char in unicodedata.normalize("NFKD", text or "")
+        if not unicodedata.combining(char)
     )
-    sem_pontuacao = PONTUACAO_RE.sub(" ", sem_acento.lower())
-    return ESPACOS_RE.sub(" ", sem_pontuacao).strip()
+    without_punctuation = PUNCTUATION_RE.sub(" ", without_accents.lower())
+    return WHITESPACE_RE.sub(" ", without_punctuation).strip()
 
 
-def limpar_transcricao(texto: str) -> str:
+def clean_transcript(text: str) -> str:
     """Remove da transcrição o que ninguém falou: emojis e os espaços que eles deixam.
 
     O prompt já proíbe, mas prompt é promessa — este filtro é a verificação, no mesmo
@@ -68,5 +68,5 @@ def limpar_transcricao(texto: str) -> str:
     palavras reais seria corromper a transcrição para melhorar uma métrica. Esse caso
     fica a cargo da instrução no prompt.
     """
-    sem_emoji = EMOJI_RE.sub("", texto)
-    return _ESPACOS_RE.sub(" ", sem_emoji).strip()
+    without_emoji = EMOJI_RE.sub("", text)
+    return _SPACES_RE.sub(" ", without_emoji).strip()

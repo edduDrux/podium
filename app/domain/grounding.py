@@ -17,19 +17,19 @@ import re
 
 from rapidfuzz import fuzz
 
-from app.domain.text import normalizar as _normalizar
-from app.schemas.feedback import GeneratedQuestion
+from app.domain.text import normalize as _normalize
+from app.schemas.feedback import QuestionResponse
 
 # Números com separadores internos ("1.000", "3,14") capturados inteiros, antes da
-# normalização — `normalizar` transforma pontuação em espaço e partiria o decimal.
-NUMERO_RE = re.compile(r"\d+(?:[.,]\d+)*")
+# normalização — `normalize` transforma pontuação em espaço e partiria o decimal.
+NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
 
 # Acima deste limiar a "pergunta" é a própria frase do slide com um ponto de interrogação
 # no fim: o modelo copiou em vez de perguntar, e devolver isso à banca não avalia nada.
 MAX_QUESTION_SIMILARITY = 85
 
 
-def _numeros(texto: str) -> set[str]:
+def _numbers(text: str) -> set[str]:
     """Números do texto em forma canônica: só os dígitos, sem separadores.
 
     "1.000" e "1000" viram o mesmo token — os separadores de milhar e o estilo do
@@ -38,11 +38,11 @@ def _numeros(texto: str) -> set[str]:
     é uma colisão rara ("3,14" e "314" empatam), documentada e aceita: falso positivo
     aqui exige coincidência de dígitos, o falso negativo aconteceria a cada decimal.
     """
-    return {numero.replace(".", "").replace(",", "") for numero in NUMERO_RE.findall(texto or "")}
+    return {number.replace(".", "").replace(",", "") for number in NUMBER_RE.findall(text or "")}
 
 
-def validar(
-    pergunta: GeneratedQuestion,
+def validate(
+    question: QuestionResponse,
     slides: dict[int, str],
     min_score: int,
 ) -> tuple[bool, str | None]:
@@ -52,14 +52,14 @@ def validar(
     *por que* o modelo falhou (citou slide inexistente, parafraseou, alterou um número,
     copiou a frase) distingue um prompt ruim de um modelo ruim.
     """
-    conteudo = slides.get(pergunta.slide_origem)
-    if conteudo is None:
+    content = slides.get(question.slide_number)
+    if content is None:
         return False, "SLIDE_INEXISTENTE"
 
-    conteudo_normalizado = _normalizar(conteudo)
+    normalized_content = _normalize(content)
 
-    trecho_score = fuzz.partial_ratio(_normalizar(pergunta.trecho_literal), conteudo_normalizado)
-    if trecho_score < min_score:
+    quote_score = fuzz.partial_ratio(_normalize(question.quote), normalized_content)
+    if quote_score < min_score:
         return False, "TRECHO_NAO_LITERAL"
 
     # Checagem à parte do score difuso, porque o score não enxerga dígito: trocar
@@ -67,11 +67,11 @@ def validar(
     # 96.2 (medido) e passa em qualquer limiar praticável. Número alterado é o erro mais
     # perigoso diante de uma banca — a checagem é conjuntiva: o trecho precisa passar no
     # difuso E cada número dele precisa existir literalmente no slide de origem.
-    if _numeros(pergunta.trecho_literal) - _numeros(conteudo):
+    if _numbers(question.quote) - _numbers(content):
         return False, "NUMERO_NAO_ENCONTRADO"
 
-    pergunta_score = fuzz.partial_ratio(_normalizar(pergunta.question), conteudo_normalizado)
-    if pergunta_score >= MAX_QUESTION_SIMILARITY:
+    question_score = fuzz.partial_ratio(_normalize(question.question), normalized_content)
+    if question_score >= MAX_QUESTION_SIMILARITY:
         return False, "PERGUNTA_TRIVIAL"
 
     return True, None

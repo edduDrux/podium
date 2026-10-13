@@ -22,7 +22,7 @@ baixos e configuráveis, e a plural simples é tolerada ("metodologia" ≡ "meto
 
 from typing import NamedTuple
 
-from app.domain.text import normalizar
+from app.domain.text import normalize
 
 # Palavras funcionais do português (já normalizadas: sem acento, minúsculas). Só afetam
 # a extração dos termos DOS SLIDES — a transcrição entra inteira. Tokens com menos de
@@ -44,111 +44,111 @@ STOPWORDS = frozenset(
 # Um termo presente em quase todos os slides é estrutura (título do trabalho, nome do
 # autor, rodapé), não conteúdo — cobrá-lo na fala mediria a repetição do template. O
 # expurgo só se aplica com 4+ slides: com poucos, "quase todos" não distingue nada.
-MIN_SLIDES_PARA_EXPURGO = 4
-FRACAO_ESTRUTURAL = 0.8
+MIN_SLIDES_FOR_PURGE = 4
+STRUCTURAL_FRACTION = 0.8
 
-APRESENTADO = "apresentado"
-PARCIAL = "parcial"
-NAO_APRESENTADO = "nao_apresentado"
+PRESENTED = "apresentado"
+PARTIAL = "parcial"
+NOT_PRESENTED = "nao_apresentado"
 # Slide cujos termos foram todos filtrados (só imagem, só stopword, só estrutura):
 # não há o que medir, e fingir 0% o acusaria de não apresentado sem evidência.
-SEM_TERMOS = "sem_termos"
+NO_TERMS = "sem_termos"
 
 
-class CoberturaSlide(NamedTuple):
+class SlideCoverage(NamedTuple):
     """O veredicto de um slide, com a evidência que o sustenta."""
 
-    numero: int
-    classificacao: str
+    slide_number: int
+    classification: str
     # None quando não há termos mensuráveis (SEM_TERMOS).
     score: float | None
-    termos_totais: int
-    termos_presentes: int
+    total_terms: int
+    present_terms: int
     # A evidência auditável do que faltou — é isto que responde "o que eu preparei
     # e não apresentei?".
-    termos_ausentes: list[str]
+    missing_terms: list[str]
 
 
-class ResultadoCobertura(NamedTuple):
-    slides: list[CoberturaSlide]
+class CoverageResult(NamedTuple):
+    slides: list[SlideCoverage]
     # Agregado ponderado: termos presentes ÷ termos totais de todos os slides. Ponderar
     # pelo termo (e não pela média dos scores) impede que um slide de 2 palavras pese
     # o mesmo que um de 40.
-    percentual_coberto: float
+    coverage_ratio: float
     # O sinal do teste adversarial: material e fala descolados. Na sessão real medida
     # (slides do TCC + áudio de feijoada), este é o campo que faltava no contrato.
-    alerta_descolamento: bool
+    mismatch_alert: bool
 
 
-def avaliar(
+def evaluate(
     slides: dict[int, str],
     transcript: str,
-    limiar_apresentado: float,
-    limiar_parcial: float,
-    limiar_alerta: float,
-) -> ResultadoCobertura:
+    presented_threshold: float,
+    partial_threshold: float,
+    alert_threshold: float,
+) -> CoverageResult:
     """Cruza o material com a transcrição e classifica slide a slide.
 
     Os limiares vêm por parâmetro porque o domínio não lê configuração — quem decide os
     números é a raiz de composição, e os testes exercitam o cálculo com valores próprios.
     """
-    termos_por_slide = {numero: _termos(conteudo) for numero, conteudo in sorted(slides.items())}
-    _expurgar_estruturais(termos_por_slide)
+    terms_by_slide = {number: _terms(content) for number, content in sorted(slides.items())}
+    _purge_structural(terms_by_slide)
 
-    falados = _canonicos(normalizar(transcript).split())
+    spoken = _canonicals(normalize(transcript).split())
 
-    avaliacoes: list[CoberturaSlide] = []
-    total_termos = 0
-    total_presentes = 0
+    verdicts: list[SlideCoverage] = []
+    term_count = 0
+    present_count = 0
 
-    for numero, termos in termos_por_slide.items():
-        if not termos:
-            avaliacoes.append(CoberturaSlide(numero, SEM_TERMOS, None, 0, 0, []))
+    for number, terms in terms_by_slide.items():
+        if not terms:
+            verdicts.append(SlideCoverage(number, NO_TERMS, None, 0, 0, []))
             continue
 
-        ausentes = sorted(termo for termo, canonico in termos.items() if canonico not in falados)
-        presentes = len(termos) - len(ausentes)
-        score = presentes / len(termos)
+        missing = sorted(term for term, canonical in terms.items() if canonical not in spoken)
+        present = len(terms) - len(missing)
+        score = present / len(terms)
 
-        total_termos += len(termos)
-        total_presentes += presentes
+        term_count += len(terms)
+        present_count += present
 
-        avaliacoes.append(
-            CoberturaSlide(
-                numero=numero,
-                classificacao=_classificar(score, limiar_apresentado, limiar_parcial),
+        verdicts.append(
+            SlideCoverage(
+                slide_number=number,
+                classification=_classify(score, presented_threshold, partial_threshold),
                 score=round(score, 4),
-                termos_totais=len(termos),
-                termos_presentes=presentes,
-                termos_ausentes=ausentes,
+                total_terms=len(terms),
+                present_terms=present,
+                missing_terms=missing,
             )
         )
 
-    percentual = total_presentes / total_termos if total_termos else 0.0
+    ratio = present_count / term_count if term_count else 0.0
 
-    return ResultadoCobertura(
-        slides=avaliacoes,
-        percentual_coberto=round(percentual, 4),
+    return CoverageResult(
+        slides=verdicts,
+        coverage_ratio=round(ratio, 4),
         # Sem termo mensurável nenhum não há evidência de descolamento — só de material
         # imensurável; o alerta exige medição.
-        alerta_descolamento=total_termos > 0 and percentual < limiar_alerta,
+        mismatch_alert=term_count > 0 and ratio < alert_threshold,
     )
 
 
-def _termos(conteudo: str) -> dict[str, str]:
+def _terms(content: str) -> dict[str, str]:
     """Termos relevantes de um slide: `{termo_como_escrito: forma_canonica}`.
 
     Guarda o termo original (normalizado, mas não canonizado) porque é ele que aparece
-    em `termos_ausentes` — mostrar "metodologia" ao usuário, nunca o radical interno.
+    em `missing_terms` — mostrar "metodologia" ao usuário, nunca o radical interno.
     """
-    termos: dict[str, str] = {}
-    for token in normalizar(conteudo).split():
+    terms: dict[str, str] = {}
+    for token in normalize(content).split():
         if token.isdigit() or (len(token) >= 3 and token not in STOPWORDS):
-            termos.setdefault(token, _canonico(token))
-    return termos
+            terms.setdefault(token, _canonical(token))
+    return terms
 
 
-def _canonico(token: str) -> str:
+def _canonical(token: str) -> str:
     """Plural simples tolerado: "metodologias" e "metodologia" são o mesmo termo.
 
     Só o "s" final, e só em tokens com sobra de tamanho: stemming de verdade traria uma
@@ -159,31 +159,31 @@ def _canonico(token: str) -> str:
     return token
 
 
-def _canonicos(tokens: list[str]) -> set[str]:
-    return {_canonico(token) for token in tokens}
+def _canonicals(tokens: list[str]) -> set[str]:
+    return {_canonical(token) for token in tokens}
 
 
-def _expurgar_estruturais(termos_por_slide: dict[int, dict[str, str]]) -> None:
+def _purge_structural(terms_by_slide: dict[int, dict[str, str]]) -> None:
     """Remove termos presentes em quase todos os slides — template, não conteúdo."""
-    if len(termos_por_slide) < MIN_SLIDES_PARA_EXPURGO:
+    if len(terms_by_slide) < MIN_SLIDES_FOR_PURGE:
         return
 
-    ocorrencias: dict[str, int] = {}
-    for termos in termos_por_slide.values():
-        for canonico in set(termos.values()):
-            ocorrencias[canonico] = ocorrencias.get(canonico, 0) + 1
+    occurrences: dict[str, int] = {}
+    for terms in terms_by_slide.values():
+        for canonical in set(terms.values()):
+            occurrences[canonical] = occurrences.get(canonical, 0) + 1
 
-    corte = FRACAO_ESTRUTURAL * len(termos_por_slide)
-    estruturais = {canonico for canonico, n in ocorrencias.items() if n > corte}
+    cut = STRUCTURAL_FRACTION * len(terms_by_slide)
+    structural = {canonical for canonical, n in occurrences.items() if n > cut}
 
-    for termos in termos_por_slide.values():
-        for termo in [t for t, canonico in termos.items() if canonico in estruturais]:
-            del termos[termo]
+    for terms in terms_by_slide.values():
+        for term in [t for t, canonical in terms.items() if canonical in structural]:
+            del terms[term]
 
 
-def _classificar(score: float, limiar_apresentado: float, limiar_parcial: float) -> str:
-    if score >= limiar_apresentado:
-        return APRESENTADO
-    if score >= limiar_parcial:
-        return PARCIAL
-    return NAO_APRESENTADO
+def _classify(score: float, presented_threshold: float, partial_threshold: float) -> str:
+    if score >= presented_threshold:
+        return PRESENTED
+    if score >= partial_threshold:
+        return PARTIAL
+    return NOT_PRESENTED

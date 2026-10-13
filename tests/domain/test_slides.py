@@ -9,88 +9,88 @@ delas regredir, o aterramento passa a reprovar trecho honesto — e a falha apar
 from app.domain import slides
 
 
-def test_bloco_e_montar_produzem_o_formato_do_contrato():
-    texto = slides.montar([slides.bloco(1, "Primeiro"), slides.bloco(2, "Segundo")])
-    assert texto == "[Slide 1]\nPrimeiro\n\n[Slide 2]\nSegundo"
+def test_block_and_assemble_produce_the_contract_format():
+    text = slides.assemble([slides.block(1, "Primeiro"), slides.block(2, "Segundo")])
+    assert text == "[Slide 1]\nPrimeiro\n\n[Slide 2]\nSegundo"
 
 
-def test_parse_desfaz_o_que_montar_fez():
+def test_parse_undoes_what_assemble_did():
     original = {1: "Introdução ao tema", 2: "Metodologia aplicada"}
-    texto = slides.montar([slides.bloco(numero, conteudo) for numero, conteudo in original.items()])
-    assert slides.parse(texto) == original
+    text = slides.assemble([slides.block(number, content) for number, content in original.items()])
+    assert slides.parse(text) == original
 
 
-def test_buraco_na_numeracao_e_preservado():
+def test_gap_in_numbering_is_preserved():
     """PDF pula página sem texto: `{1, 2, 5}` está correto — não renumerar, não preencher."""
-    texto = slides.montar(
-        [slides.bloco(1, "Capa"), slides.bloco(2, "Agenda"), slides.bloco(5, "Conclusão")]
+    text = slides.assemble(
+        [slides.block(1, "Capa"), slides.block(2, "Agenda"), slides.block(5, "Conclusão")]
     )
-    assert set(slides.parse(texto)) == {1, 2, 5}
-    assert slides.parse(texto)[5] == "Conclusão"
+    assert set(slides.parse(text)) == {1, 2, 5}
+    assert slides.parse(text)[5] == "Conclusão"
 
 
-def test_conteudo_com_linha_em_branco_nao_fragmenta_o_slide():
+def test_content_with_blank_line_does_not_split_the_slide():
     """A armadilha do `split("\\n\\n")`: o conteúdo de um slide também pode conter `\\n\\n`.
 
-    Fragmentar aqui atribuiria a segunda metade ao slide seguinte, e um `trecho_literal`
+    Fragmentar aqui atribuiria a segunda metade ao slide seguinte, e um `quote`
     honesto dela seria reprovado como inventado.
     """
-    texto = slides.montar(
+    text = slides.assemble(
         [
-            slides.bloco(1, "Primeiro parágrafo\n\nSegundo parágrafo"),
-            slides.bloco(2, "Outro slide"),
+            slides.block(1, "Primeiro parágrafo\n\nSegundo parágrafo"),
+            slides.block(2, "Outro slide"),
         ]
     )
-    resultado = slides.parse(texto)
+    result = slides.parse(text)
 
-    assert set(resultado) == {1, 2}
-    assert resultado[1] == "Primeiro parágrafo\n\nSegundo parágrafo"
+    assert set(result) == {1, 2}
+    assert result[1] == "Primeiro parágrafo\n\nSegundo parágrafo"
 
 
-def test_conteudo_nao_forja_marcador_em_linha_propria():
+def test_content_cannot_forge_a_marker_on_its_own_line():
     """A apresentação do próprio TCC mostra `[Slide N]` como exemplo, sozinho na linha.
 
     Sem neutralizar na emissão, nasceria o slide fantasma 7 e o slide 2 perderia tudo que
     vinha depois da citação.
     """
-    texto = slides.montar(
+    text = slides.assemble(
         [
-            slides.bloco(1, "Introdução"),
-            slides.bloco(2, "O formato emitido é:\n[Slide 7]\ne o conteúdo vem abaixo"),
-            slides.bloco(3, "Conclusão"),
+            slides.block(1, "Introdução"),
+            slides.block(2, "O formato emitido é:\n[Slide 7]\ne o conteúdo vem abaixo"),
+            slides.block(3, "Conclusão"),
         ]
     )
-    resultado = slides.parse(texto)
+    result = slides.parse(text)
 
-    assert set(resultado) == {1, 2, 3}
+    assert set(result) == {1, 2, 3}
     # O slide real manteve o que vinha DEPOIS da citação.
-    assert "e o conteúdo vem abaixo" in resultado[2]
+    assert "e o conteúdo vem abaixo" in result[2]
     # E a citação continua legível para o LLM copiar.
-    assert "[Slide 7]" in resultado[2]
+    assert "[Slide 7]" in result[2]
 
 
-def test_marcador_citado_no_meio_da_frase_nao_corta():
-    texto = slides.montar([slides.bloco(1, "Conforme o [Slide 3] mostra, o dado é claro")])
-    resultado = slides.parse(texto)
+def test_marker_quoted_mid_sentence_does_not_cut():
+    text = slides.assemble([slides.block(1, "Conforme o [Slide 3] mostra, o dado é claro")])
+    result = slides.parse(text)
 
-    assert set(resultado) == {1}
-    assert "o dado é claro" in resultado[1]
+    assert set(result) == {1}
+    assert "o dado é claro" in result[1]
 
 
-def test_marcador_repetido_acumula_em_vez_de_sobrescrever():
+def test_repeated_marker_accumulates_instead_of_overwriting():
     """Perder metade do conteúdo faria a validação reprovar trechos legítimos."""
-    resultado = slides.parse("[Slide 1]\nPrimeira parte\n\n[Slide 1]\nSegunda parte")
+    result = slides.parse("[Slide 1]\nPrimeira parte\n\n[Slide 1]\nSegunda parte")
 
-    assert set(resultado) == {1}
-    assert "Primeira parte" in resultado[1]
-    assert "Segunda parte" in resultado[1]
-
-
-def test_normalizar_colapsa_espacos_e_linhas_em_branco():
-    assert slides.normalizar("a   b\t\tc") == "a b c"
-    assert slides.normalizar("linha\n\n\n\n\noutra") == "linha\n\noutra"
+    assert set(result) == {1}
+    assert "Primeira parte" in result[1]
+    assert "Segunda parte" in result[1]
 
 
-def test_parse_de_texto_vazio_nao_levanta():
+def test_normalize_collapses_spaces_and_blank_lines():
+    assert slides.normalize("a   b\t\tc") == "a b c"
+    assert slides.normalize("linha\n\n\n\n\noutra") == "linha\n\noutra"
+
+
+def test_parse_of_empty_text_does_not_raise():
     assert slides.parse("") == {}
     assert slides.parse("texto sem marcador nenhum") == {}

@@ -5,11 +5,11 @@ problemas concretos:
 
 1. **Direção da dependência.** Ao instrumentar a auditoria, os adaptadores de IA passaram
    a importar o serviço de auditoria, que importa o banco — ou seja, para gerar perguntas
-   era preciso arrastar o SQLAlchemy junto. Com `Auditoria` como porta injetada, o
+   era preciso arrastar o SQLAlchemy junto. Com `Audit` como porta injetada, o
    adaptador declara o que precisa e quem monta o sistema decide o que entregar.
 
-2. **Testar sem infraestrutura.** Um `Transcritor` falso devolve texto fixo e um
-   `BancaExaminadora` falso devolve perguntas fixas, permitindo exercitar o pipeline
+2. **Testar sem infraestrutura.** Um `Transcriber` falso devolve texto fixo e um
+   `Panel` falso devolve perguntas fixas, permitindo exercitar o pipeline
    inteiro sem rede, sem cota de IA e sem Postgres.
 
 São `Protocol` e não classes-base: a implementação não precisa herdar nada, basta ter os
@@ -27,19 +27,19 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from app.core.enums import LLMCallStage, PersonaType
-from app.domain.panel import ResultadoGeracao
+from app.domain.panel import GenerationResult
 
 
 @runtime_checkable
-class Auditoria(Protocol):
+class Audit(Protocol):
     """Registro das chamadas de IA para o capítulo de validação técnica."""
 
-    def medir(
+    def measure(
         self,
         presentation_id: uuid.UUID | None,
-        etapa: LLMCallStage,
-        modelo: str,
-        temperatura: float,
+        stage: LLMCallStage,
+        model: str,
+        temperature: float,
     ) -> AbstractAsyncContextManager[dict[str, int | None]]:
         """Cronometra o bloco e grava o registro, tendo a chamada falhado ou não.
 
@@ -51,10 +51,10 @@ class Auditoria(Protocol):
 
 
 @runtime_checkable
-class Transcritor(Protocol):
+class Transcriber(Protocol):
     """Converte o áudio da apresentação em texto."""
 
-    async def transcrever(
+    async def transcribe(
         self,
         audio_path: Path | str,
         language: str = "pt",
@@ -63,13 +63,13 @@ class Transcritor(Protocol):
 
 
 @runtime_checkable
-class BancaExaminadora(Protocol):
+class Panel(Protocol):
     """Formula as perguntas da banca a partir do material e da fala."""
 
-    async def gerar_perguntas(
+    async def generate_questions(
         self,
         slides_text: str,
         transcript: str,
         persona: PersonaType,
         presentation_id: uuid.UUID | None = None,
-    ) -> ResultadoGeracao: ...
+    ) -> GenerationResult: ...

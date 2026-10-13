@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/presentations", tags=["presentations"])
 
 
-def _garantir_duracao_permitida(duration: float) -> None:
+def _ensure_allowed_duration(duration: float) -> None:
     """Recusa áudio acima do teto do MVP."""
     max_seconds = settings.MAX_AUDIO_DURATION_MINUTES * 60
     if duration > max_seconds:
@@ -61,7 +61,7 @@ async def init_presentation(
     db: DbSession,
     file: Annotated[UploadFile, File(description="Apresentação em PDF ou PPTx.")],
     persona: Annotated[PersonaType, Form(description="Persona da banca (LLM).")],
-    scenario: Annotated[ScenarioType, Form()] = ScenarioType.SALA_DE_AULA,
+    scenario: Annotated[ScenarioType, Form()] = ScenarioType.CLASSROOM,
     user_id: Annotated[uuid.UUID | None, Form()] = None,
 ) -> PresentationInitResponse:
     """Recebe cenário, persona e a apresentação do Cliente VR; extrai o texto dos slides."""
@@ -158,13 +158,13 @@ async def upload_audio(
     duration: float | None = None
 
     if is_chunk:
-        recebidos = storage.list_audio_chunks(presentation.id)
-        if recebidos and recebidos[0].suffix != suffix:
+        received_chunks = storage.list_audio_chunks(presentation.id)
+        if received_chunks and received_chunks[0].suffix != suffix:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
                     f"Este chunk veio em '{suffix}', mas a sessão já recebeu chunks em "
-                    f"'{recebidos[0].suffix}'. Envie todos os pedaços no mesmo formato."
+                    f"'{received_chunks[0].suffix}'. Envie todos os pedaços no mesmo formato."
                 ),
             )
 
@@ -193,7 +193,7 @@ async def upload_audio(
             )
 
         if duration is not None:
-            _garantir_duracao_permitida(duration)
+            _ensure_allowed_duration(duration)
 
         presentation.audio_path = str(destination)
 
@@ -238,9 +238,9 @@ async def analyze_presentation(
         # Antes de qualquer processamento: os pedaços viram um arquivo único e íntegro.
         # Roda em threadpool porque decodificar e reexportar é trabalho de CPU e
         # bloquearia o event loop — junto com ele, o polling de todas as outras sessões.
-        destino = storage.audio_path(presentation.id, chunks[0].suffix)
+        destination = storage.audio_path(presentation.id, chunks[0].suffix)
         try:
-            audio_path = str(await run_in_threadpool(audio.concat_chunks, chunks, destino))
+            audio_path = str(await run_in_threadpool(audio.concat_chunks, chunks, destination))
         except audio.MixedChunkFormatsError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
@@ -263,14 +263,14 @@ async def analyze_presentation(
             detail="Não foi possível decodificar o áudio enviado para esta sessão.",
         ) from exc
 
-    _garantir_duracao_permitida(duration)
+    _ensure_allowed_duration(duration)
 
     # Controle de concorrência otimista: a condição `status != processing` viaja junto do
     # UPDATE, então quem marca a sessão é o próprio banco, num único comando atômico.
     # Ler o status e depois escrever deixava uma janela entre as duas operações — dois
     # /analyze simultâneos liam `audio_received`, os dois passavam pelo guard e a análise
     # rodava duas vezes, gastando duas chamadas de LLM e disputando o mesmo feedback.
-    resultado = await db.execute(
+    result = await db.execute(
         update(Presentation)
         .where(
             Presentation.id == presentation.id,
@@ -287,8 +287,8 @@ async def analyze_presentation(
 
     # O `execute` é tipado como `Result` genérico; num UPDATE o objeto é um `CursorResult`,
     # que é quem tem `rowcount`. Nenhuma linha atualizada: outra requisição chegou antes.
-    marcada = cast(CursorResult[Any], resultado)
-    if marcada.rowcount == 0:
+    marked = cast(CursorResult[Any], result)
+    if marked.rowcount == 0:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Esta sessão já está sendo analisada.",
@@ -312,7 +312,7 @@ async def analyze_presentation(
 async def submit_transcript(
     db: DbSession,
     presentation: CurrentPresentation,
-    corpo: TranscriptSubmission,
+    body: TranscriptSubmission,
 ) -> TranscriptAcceptedResponse:
     """Registra a fala já transcrita pelo headset, para que o `/analyze` pule o STT.
 
@@ -331,8 +331,8 @@ async def submit_transcript(
         )
 
     try:
-        feedback = transcript_service.registrar(presentation, corpo.transcript, corpo.engine)
-    except transcript_service.TranscricaoVaziaError as exc:
+        feedback = transcript_service.register(presentation, body.transcript, body.engine)
+    except transcript_service.EmptyTranscriptError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
@@ -340,20 +340,20 @@ async def submit_transcript(
     db.add(feedback)
     await db.commit()
 
-    # `registrar` recusa transcrição vazia; o `or ""` só existe porque a coluna é opcional.
-    texto = feedback.transcript or ""
+    # `register` recusa transcrição vazia; o `or ""` só existe porque a coluna é opcional.
+    text = feedback.transcript or ""
     logger.info(
         "Sessão %s recebeu transcrição do cliente (%s): %d caracteres.",
         presentation.id,
-        corpo.engine or "motor não informado",
-        len(texto),
+        body.engine or "motor não informado",
+        len(text),
     )
 
     return TranscriptAcceptedResponse(
         session_id=presentation.id,
         status=presentation.status,
-        char_count=len(texto),
-        word_count=len(texto.split()),
+        char_count=len(text),
+        word_count=len(text.split()),
     )
 
 
@@ -365,56 +365,54 @@ async def submit_transcript(
 async def get_slides_info(presentation: CurrentPresentation) -> SlidesInfoResponse:
     """Metadados para a tela da sala: o Cliente VR decide daqui quantas imagens pedir."""
     total = 0
-    if slide_renderer.renderizavel(presentation):
-        total = await run_in_threadpool(slide_renderer.contar_paginas, presentation.file_path)
+    if slide_renderer.is_renderable(presentation):
+        total = await run_in_threadpool(slide_renderer.count_pages, presentation.file_path)
 
     return SlidesInfoResponse(
         session_id=presentation.id,
         file_type=presentation.file_type,
         total=total,
-        renderizavel=total > 0,
-        motivo=slide_renderer.motivo_de_nao_renderizar(presentation),
-        largura_padrao=slide_renderer.LARGURA_PADRAO,
-        largura_maxima=slide_renderer.LARGURA_MAXIMA,
+        renderable=total > 0,
+        reason=slide_renderer.unrenderable_reason(presentation),
+        default_width=slide_renderer.DEFAULT_WIDTH,
+        max_width=slide_renderer.MAX_WIDTH,
     )
 
 
 @router.get(
-    "/{session_id}/slides/{numero}",
+    "/{session_id}/slides/{number}",
     summary="Uma página da apresentação em PNG, para a tela da sala",
     response_class=Response,
     responses={200: {"content": {"image/png": {}}}},
 )
 async def get_slide_image(
     presentation: CurrentPresentation,
-    numero: int,
-    largura: Annotated[
+    number: int,
+    width: Annotated[
         int | None,
         Query(description="Largura em pixels; a altura segue a proporção da página."),
     ] = None,
 ) -> Response:
-    """Renderiza a página `numero` (base 1) do PDF que veio no `/init`.
+    """Renderiza a página `number` (base 1) do PDF que veio no `/init`.
 
     A numeração é a do arquivo — a mesma do `[Slide N]` do texto extraído e do
-    `slide_origem` das perguntas. É isso que deixa o cliente levar a parede ao slide que
+    `slide_number` das perguntas. É isso que deixa o cliente levar a parede ao slide que
     gerou a pergunta sem tabela de conversão nenhuma.
     """
-    if not slide_renderer.renderizavel(presentation):
+    if not slide_renderer.is_renderable(presentation):
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=slide_renderer.motivo_de_nao_renderizar(presentation),
+            detail=slide_renderer.unrenderable_reason(presentation),
         )
 
-    largura_px = slide_renderer.largura_valida(largura)
+    width_px = slide_renderer.clamp_width(width)
     try:
-        imagem = await run_in_threadpool(
-            slide_renderer.pagina_em_cache, presentation, numero, largura_px
-        )
-    except slide_renderer.PaginaInexistenteError as exc:
+        image = await run_in_threadpool(slide_renderer.cached_page, presentation, number, width_px)
+    except slide_renderer.PageNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
     return Response(
-        content=imagem,
+        content=image,
         media_type="image/png",
         # O PDF da sessão não muda depois do /init: o headset pode guardar a imagem.
         headers={"Cache-Control": "private, max-age=86400"},

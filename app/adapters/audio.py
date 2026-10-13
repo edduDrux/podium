@@ -4,7 +4,7 @@ from pathlib import Path
 from pydub import AudioSegment
 from pydub.silence import detect_silence
 
-from app.schemas.feedback import SpeechMetrics
+from app.schemas.feedback import DeliveryMetricsResponse
 
 logger = logging.getLogger(__name__)
 
@@ -49,24 +49,24 @@ def concat_chunks(chunk_paths: list[Path], destination: Path) -> Path:
     if not chunk_paths:
         raise ValueError("Nenhum chunk de áudio para unir.")
 
-    formatos = sorted({caminho.suffix.lower() for caminho in chunk_paths})
-    if len(formatos) > 1:
+    formats = sorted({path.suffix.lower() for path in chunk_paths})
+    if len(formats) > 1:
         raise MixedChunkFormatsError(
-            f"Os chunks de áudio chegaram em formatos diferentes ({', '.join(formatos)}). "
+            f"Os chunks de áudio chegaram em formatos diferentes ({', '.join(formats)}). "
             "Envie todos os pedaços de uma sessão no mesmo formato."
         )
 
-    combinado = AudioSegment.empty()
-    for caminho in chunk_paths:
-        combinado += AudioSegment.from_file(str(caminho))
+    combined = AudioSegment.empty()
+    for path in chunk_paths:
+        combined += AudioSegment.from_file(str(path))
 
-    suffix = formatos[0]
-    combinado.export(destination, format=EXPORT_FORMAT_BY_SUFFIX.get(suffix, suffix.lstrip(".")))
+    suffix = formats[0]
+    combined.export(destination, format=EXPORT_FORMAT_BY_SUFFIX.get(suffix, suffix.lstrip(".")))
     logger.info(
         "Áudio remontado a partir de %d chunk(s): %s (%.1f s).",
         len(chunk_paths),
         destination.name,
-        len(combinado) / 1000.0,
+        len(combined) / 1000.0,
     )
     return destination
 
@@ -105,7 +105,7 @@ def _silence_threshold(audio: AudioSegment) -> float:
     return audio.dBFS - SILENCE_MARGIN_DB
 
 
-def analyze_form(audio_path: Path | str, transcript: str) -> SpeechMetrics:
+def analyze_delivery(audio_path: Path | str, transcript: str) -> DeliveryMetricsResponse:
     """Métricas de FORMA: ritmo efetivo de fala e pausas — metade do Feedback Duplo.
 
     O `words_per_minute` é o RITMO EFETIVO DE FALA: divide as palavras pelo tempo em que a
@@ -134,7 +134,7 @@ def analyze_form(audio_path: Path | str, transcript: str) -> SpeechMetrics:
     word_count = len(transcript.split())
     wpm = (word_count / speech_seconds * 60) if speech_seconds > 0 else 0.0
 
-    return SpeechMetrics(
+    return DeliveryMetricsResponse(
         duration_seconds=round(duration_seconds, 2),
         speech_seconds=round(speech_seconds, 2),
         word_count=word_count,

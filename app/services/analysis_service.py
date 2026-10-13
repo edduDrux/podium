@@ -14,16 +14,16 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.enums import PresentationStatus
 from app.domain import coverage, slides
-from app.domain.panel import ResultadoGeracao
-from app.domain.ports import BancaExaminadora, Transcritor
+from app.domain.panel import GenerationResult
+from app.domain.ports import Panel, Transcriber
 from app.models.feedback import Feedback
 from app.models.presentation import Presentation
 from app.schemas.feedback import (
+    CoverageReportResponse,
+    DeliveryMetricsResponse,
     FeedbackResponse,
-    GeneratedQuestion,
-    SlideCoverage,
-    SlideCoverageReport,
-    SpeechMetrics,
+    QuestionResponse,
+    SlideCoverageResponse,
 )
 from app.services import transcript_service
 
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 # As contagens do aterramento não são métrica de FORMA, mas moram no mesmo JSONB por
 # não existir coluna própria para elas — criar uma exigiria migration. A chave é separada
-# para que `SpeechMetrics` continue representando só o que vem do áudio.
+# para que `DeliveryMetricsResponse` continue representando só o que vem do áudio.
 GROUNDING_KEY = "aterramento"
 # Mesmo racional para os flags de truncamento de contexto: chave própria no JSONB
 # existente, sem migration e sem contaminar as métricas de áudio.
@@ -39,7 +39,7 @@ CONTEXT_KEY = "contexto"
 # E para a cobertura de slides: o relatório inteiro mora na sua chave do JSONB.
 COVERAGE_KEY = "cobertura"
 
-SEM_PERGUNTAS_ANCORADAS = (
+NO_GROUNDED_QUESTIONS = (
     "Nenhuma das perguntas formuladas pôde ser ancorada em um trecho literal dos slides, "
     "por isso a banca não devolveu perguntas nesta sessão."
 )
@@ -74,8 +74,8 @@ async def run_pipeline_in_background(session_id: uuid.UUID) -> None:
 async def run_pipeline(
     db: AsyncSession,
     presentation: Presentation,
-    transcritor: Transcritor | None = None,
-    banca: BancaExaminadora | None = None,
+    transcriber: Transcriber | None = None,
+    panel: Panel | None = None,
 ) -> FeedbackResponse:
     """Orquestra o Feedback Duplo: STT -> métricas de forma -> perguntas do LLM.
 
@@ -85,8 +85,8 @@ async def run_pipeline(
     composição; num teste, um transcritor e uma banca falsos exercitam o pipeline inteiro
     sem rede, sem cota de IA e sem depender do humor do modelo.
     """
-    transcritor = transcritor or bootstrap.transcritor()
-    banca = banca or bootstrap.banca()
+    transcriber = transcriber or bootstrap.transcriber()
+    panel = panel or bootstrap.panel()
     presentation.status = PresentationStatus.PROCESSING
     presentation.error_message = None
     await db.commit()
@@ -105,66 +105,66 @@ async def run_pipeline(
         # cobertura recalibrado — não muda o que foi dito, e a própria sessão d5caa4fd
         # pagou o STT duas vezes por isso. A transcrição pertence ao áudio: o endpoint
         # /audio a apaga ao receber áudio novo, então "existe" significa "é deste áudio".
-        transcript = _transcricao_reaproveitavel(presentation)
+        transcript = _reusable_transcript(presentation)
         if transcript is None:
             # Decodificar e reexportar o áudio é trabalho de CPU do pydub/FFmpeg: no event
             # loop, congelaria todas as requisições enquanto durasse. `asyncio.to_thread`,
             # e não o `run_in_threadpool` dos endpoints, para que o caso de uso não
             # dependa do FastAPI.
             stt_ready_path = await asyncio.to_thread(audio.normalize_for_stt, audio_path)
-            transcript = await transcritor.transcrever(
+            transcript = await transcriber.transcribe(
                 stt_ready_path, presentation_id=presentation.id
             )
-            origem = transcript_service.descrever(
-                transcript_service.ORIGEM_SERVIDOR, settings.STT_MODEL
+            origin = transcript_service.describe(
+                transcript_service.ORIGIN_SERVER, settings.STT_MODEL
             )
         else:
             # A transcrição pode ter vindo pronta do headset (transcript_service) ou de
             # uma análise anterior; a origem gravada com ela viaja junto, e um feedback
             # anterior a esse registro só pode ter vindo do STT daqui.
-            origem = transcript_service.origem_registrada(
+            origin = transcript_service.recorded_origin(
                 presentation.feedback
-            ) or transcript_service.descrever(transcript_service.ORIGEM_SERVIDOR, None)
+            ) or transcript_service.describe(transcript_service.ORIGIN_SERVER, None)
             logger.info(
                 "Sessão %s: transcrição existente (%s) reaproveitada, STT não chamado.",
                 presentation.id,
-                transcript_service.rotulo(origem),
+                transcript_service.label(origin),
             )
 
         # 2. FORMA: ritmo e pausas
-        metrics = await asyncio.to_thread(audio.analyze_form, audio_path, transcript)
+        delivery_metrics = await asyncio.to_thread(audio.analyze_delivery, audio_path, transcript)
 
         # 2.5 COBERTURA: material × transcrição, ANTES e independente do LLM — se a
         # banca degradar para zero perguntas, a resposta a "o que ficou por apresentar?"
         # continua saindo (mesmo princípio das métricas de forma).
-        coverage = _avaliar_cobertura(presentation, transcript)
+        coverage = _evaluate_coverage(presentation, transcript)
 
         # 3. CONTEÚDO: slides + transcrição + persona -> perguntas ancoradas da banca
-        generation = await banca.gerar_perguntas(
+        generation = await panel.generate_questions(
             slides_text=presentation.slides_text or "",
             transcript=transcript,
             persona=presentation.persona,
             presentation_id=presentation.id,
         )
 
-        content_analysis = _consolidar_analise(generation, presentation.id)
+        content_analysis = _consolidate_analysis(generation, presentation.id)
 
         feedback = presentation.feedback or Feedback(presentation_id=presentation.id)
         feedback.transcript = transcript
         feedback.questions = [q.model_dump() for q in generation.questions]
         feedback.content_analysis = content_analysis
         feedback.metrics = {
-            **metrics.model_dump(),
+            **delivery_metrics.model_dump(),
             GROUNDING_KEY: {
-                "perguntas_geradas": generation.perguntas_geradas,
-                "perguntas_aprovadas": generation.perguntas_aprovadas,
+                "perguntas_geradas": generation.questions_generated,
+                "perguntas_aprovadas": generation.questions_approved,
             },
             CONTEXT_KEY: {
-                "slides_truncados": generation.slides_truncados,
-                "transcricao_truncada": generation.transcricao_truncada,
+                "slides_truncados": generation.slides_truncated,
+                "transcricao_truncada": generation.transcript_truncated,
             },
             COVERAGE_KEY: coverage.model_dump(),
-            transcript_service.TRANSCRIPT_KEY: origem,
+            transcript_service.TRANSCRIPT_KEY: origin,
         }
 
         db.add(feedback)
@@ -176,13 +176,13 @@ async def run_pipeline(
             transcript=transcript,
             questions=generation.questions,
             content_analysis=content_analysis,
-            metrics=metrics,
-            perguntas_geradas=generation.perguntas_geradas,
-            perguntas_aprovadas=generation.perguntas_aprovadas,
-            slides_truncados=generation.slides_truncados,
-            transcricao_truncada=generation.transcricao_truncada,
+            delivery_metrics=delivery_metrics,
+            questions_generated=generation.questions_generated,
+            questions_approved=generation.questions_approved,
+            slides_truncated=generation.slides_truncated,
+            transcript_truncated=generation.transcript_truncated,
             slide_coverage=coverage,
-            transcript_source=transcript_service.rotulo(origem),
+            transcript_source=transcript_service.label(origin),
         )
 
     except Exception as exc:
@@ -193,7 +193,7 @@ async def run_pipeline(
         raise
 
 
-def _transcricao_reaproveitavel(presentation: Presentation) -> str | None:
+def _reusable_transcript(presentation: Presentation) -> str | None:
     """Transcrição anterior da sessão, se houver uma que valha a pena reusar.
 
     Transcrição vazia não é reaproveitada: pode ser o resultado legítimo de um áudio sem
@@ -207,35 +207,35 @@ def _transcricao_reaproveitavel(presentation: Presentation) -> str | None:
     return feedback.transcript
 
 
-def _avaliar_cobertura(presentation: Presentation, transcript: str) -> SlideCoverageReport:
+def _evaluate_coverage(presentation: Presentation, transcript: str) -> CoverageReportResponse:
     """Executa o domínio da cobertura e converte para o contrato da API.
 
     A raiz de composição é aqui: o domínio recebe os limiares por parâmetro e não sabe
     que existe um `settings`.
     """
-    resultado = coverage.avaliar(
+    result = coverage.evaluate(
         slides.parse(presentation.slides_text or ""),
         transcript,
-        limiar_apresentado=settings.COVERAGE_FULL_THRESHOLD,
-        limiar_parcial=settings.COVERAGE_PARTIAL_THRESHOLD,
-        limiar_alerta=settings.COVERAGE_ALERT_THRESHOLD,
+        presented_threshold=settings.COVERAGE_FULL_THRESHOLD,
+        partial_threshold=settings.COVERAGE_PARTIAL_THRESHOLD,
+        alert_threshold=settings.COVERAGE_ALERT_THRESHOLD,
     )
 
-    if resultado.alerta_descolamento:
+    if result.mismatch_alert:
         logger.warning(
             "Sessão %s: descolamento entre material e fala — cobertura de %.1f%%.",
             presentation.id,
-            resultado.percentual_coberto * 100,
+            result.coverage_ratio * 100,
         )
 
-    return SlideCoverageReport(
-        slides=[SlideCoverage(**avaliacao._asdict()) for avaliacao in resultado.slides],
-        percentual_coberto=resultado.percentual_coberto,
-        alerta_descolamento=resultado.alerta_descolamento,
+    return CoverageReportResponse(
+        slides=[SlideCoverageResponse(**verdict._asdict()) for verdict in result.slides],
+        coverage_ratio=result.coverage_ratio,
+        mismatch_alert=result.mismatch_alert,
     )
 
 
-def _consolidar_analise(generation: ResultadoGeracao, session_id: uuid.UUID) -> str:
+def _consolidate_analysis(generation: GenerationResult, session_id: uuid.UUID) -> str:
     """Acrescenta o aviso de banca vazia à análise textual, quando for o caso.
 
     Sessão sem pergunta aprovada NÃO é falha: o pipeline rodou inteiro e a resposta
@@ -249,12 +249,12 @@ def _consolidar_analise(generation: ResultadoGeracao, session_id: uuid.UUID) -> 
     logger.warning(
         "Sessão %s concluída sem perguntas aprovadas (%d geradas pelo LLM).",
         session_id,
-        generation.perguntas_geradas,
+        generation.questions_generated,
     )
 
     if not generation.content_analysis:
-        return SEM_PERGUNTAS_ANCORADAS
-    return f"{generation.content_analysis}\n\n{SEM_PERGUNTAS_ANCORADAS}"
+        return NO_GROUNDED_QUESTIONS
+    return f"{generation.content_analysis}\n\n{NO_GROUNDED_QUESTIONS}"
 
 
 def to_response(presentation: Presentation) -> FeedbackResponse:
@@ -264,41 +264,43 @@ def to_response(presentation: Presentation) -> FeedbackResponse:
         return FeedbackResponse(session_id=presentation.id)
 
     metrics_data = dict(feedback.metrics or {})
-    aterramento = metrics_data.pop(GROUNDING_KEY, {}) or {}
-    contexto = metrics_data.pop(CONTEXT_KEY, {}) or {}
-    cobertura_gravada = metrics_data.pop(COVERAGE_KEY, None)
+    grounding_counts = metrics_data.pop(GROUNDING_KEY, {}) or {}
+    context = metrics_data.pop(CONTEXT_KEY, {}) or {}
+    stored_coverage = metrics_data.pop(COVERAGE_KEY, None)
     metrics_data.pop(transcript_service.TRANSCRIPT_KEY, None)
-    questions = _questions_persistidas(feedback.questions, presentation.id)
+    questions = _stored_questions(feedback.questions, presentation.id)
 
     return FeedbackResponse(
         session_id=presentation.id,
         transcript=feedback.transcript,
         questions=questions,
         content_analysis=feedback.content_analysis,
-        metrics=SpeechMetrics(**metrics_data) if metrics_data else SpeechMetrics(),
+        delivery_metrics=DeliveryMetricsResponse(**metrics_data)
+        if metrics_data
+        else DeliveryMetricsResponse(),
         # Feedback gravado antes da camada de aterramento não tem as contagens; nesse caso
         # o que existe no banco já são as perguntas efetivamente entregues.
-        perguntas_geradas=aterramento.get("perguntas_geradas", len(questions)),
-        perguntas_aprovadas=aterramento.get("perguntas_aprovadas", len(questions)),
+        questions_generated=grounding_counts.get("perguntas_geradas", len(questions)),
+        questions_approved=grounding_counts.get("perguntas_aprovadas", len(questions)),
         # Feedback anterior a este flag não declarou truncamento; False é o registro
         # honesto do que se sabe dele.
-        slides_truncados=contexto.get("slides_truncados", False),
-        transcricao_truncada=contexto.get("transcricao_truncada", False),
-        slide_coverage=_cobertura_persistida(cobertura_gravada, presentation.id),
-        transcript_source=transcript_service.rotulo(transcript_service.origem_registrada(feedback)),
+        slides_truncated=context.get("slides_truncados", False),
+        transcript_truncated=context.get("transcricao_truncada", False),
+        slide_coverage=_stored_coverage(stored_coverage, presentation.id),
+        transcript_source=transcript_service.label(transcript_service.recorded_origin(feedback)),
     )
 
 
-def _cobertura_persistida(dados: Any, session_id: uuid.UUID) -> SlideCoverageReport | None:
+def _stored_coverage(data: Any, session_id: uuid.UUID) -> CoverageReportResponse | None:
     """Reconstrói o relatório de cobertura gravado, tolerando o que não couber no contrato.
 
     `None` para feedback anterior à cobertura — ausência de medição não é medição
     zerada, e o Cliente VR precisa distinguir as duas.
     """
-    if not dados:
+    if not data:
         return None
     try:
-        return SlideCoverageReport(**dados)
+        return CoverageReportResponse(**data)
     except ValidationError, TypeError:
         logger.warning(
             "Cobertura persistida da sessão %s é incompatível com o contrato atual e foi omitida.",
@@ -307,20 +309,18 @@ def _cobertura_persistida(dados: Any, session_id: uuid.UUID) -> SlideCoverageRep
         return None
 
 
-def _questions_persistidas(
-    itens: list[dict[str, Any]], session_id: uuid.UUID
-) -> list[GeneratedQuestion]:
+def _stored_questions(items: list[dict[str, Any]], session_id: uuid.UUID) -> list[QuestionResponse]:
     """Reconstrói as perguntas gravadas, ignorando as que não cabem no contrato atual.
 
-    Feedbacks gerados antes do aterramento não têm `slide_origem`/`trecho_literal`.
+    Feedbacks gerados antes do aterramento não têm `slide_number`/`quote`.
     Deixar a validação estourar transformaria o GET dessas sessões em erro 500 — melhor
     devolver o que ainda é legível do que perder a sessão inteira.
     """
-    perguntas: list[GeneratedQuestion] = []
+    questions: list[QuestionResponse] = []
 
-    for item in itens or []:
+    for item in items or []:
         try:
-            perguntas.append(GeneratedQuestion(**item))
+            questions.append(QuestionResponse(**item))
         except ValidationError, TypeError:
             logger.warning(
                 "Pergunta persistida da sessão %s é incompatível com o contrato atual "
@@ -328,4 +328,4 @@ def _questions_persistidas(
                 session_id,
             )
 
-    return perguntas
+    return questions

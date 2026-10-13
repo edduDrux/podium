@@ -53,15 +53,15 @@ def list_audio_chunks(session_id: uuid.UUID) -> list[Path]:
     gravação em disco não é garantia de ordem de fala, e áudio remontado fora de ordem
     é ruído com aparência de apresentação.
     """
-    diretorio = session_dir(session_id)
-    indexados: list[tuple[int, Path]] = []
+    directory = session_dir(session_id)
+    indexed: list[tuple[int, Path]] = []
 
-    for arquivo in diretorio.iterdir():
-        match = CHUNK_NAME_RE.match(arquivo.name)
+    for file in directory.iterdir():
+        match = CHUNK_NAME_RE.match(file.name)
         if match:
-            indexados.append((int(match.group(1)), arquivo))
+            indexed.append((int(match.group(1)), file))
 
-    return [caminho for _, caminho in sorted(indexados)]
+    return [path for _, path in sorted(indexed)]
 
 
 def next_chunk_path(session_id: uuid.UUID, suffix: str) -> Path:
@@ -79,21 +79,21 @@ def next_chunk_path(session_id: uuid.UUID, suffix: str) -> Path:
     uploads simultâneos, que calculam o mesmo índice, nunca recebam o mesmo arquivo: o
     segundo detecta a colisão e avança para o índice seguinte.
     """
-    diretorio = session_dir(session_id)
+    directory = session_dir(session_id)
     indices = [
         int(match.group(1))
-        for arquivo in diretorio.iterdir()
-        if (match := CHUNK_NAME_RE.match(arquivo.name))
+        for file in directory.iterdir()
+        if (match := CHUNK_NAME_RE.match(file.name))
     ]
-    proximo = max(indices, default=-1) + 1
+    next_index = max(indices, default=-1) + 1
 
     while True:
-        caminho = diretorio / f"chunk_{proximo:03d}{suffix}"
+        path = directory / f"chunk_{next_index:03d}{suffix}"
         try:
-            caminho.touch(exist_ok=False)
-            return caminho
+            path.touch(exist_ok=False)
+            return path
         except FileExistsError:
-            proximo += 1
+            next_index += 1
 
 
 def discard_audio_chunks(session_id: uuid.UUID) -> int:
@@ -104,21 +104,21 @@ def discard_audio_chunks(session_id: uuid.UUID) -> int:
     mantê-los faria a análise rodar sobre o áudio antigo ignorando o que acabou de
     chegar — errado e silencioso.
     """
-    removidos = 0
+    removed = 0
     for chunk in list_audio_chunks(session_id):
         try:
             chunk.unlink()
-            removidos += 1
+            removed += 1
         except OSError:
             logger.warning("Não foi possível remover o chunk %s", chunk)
 
-    if removidos:
+    if removed:
         logger.info(
             "Sessão %s recebeu áudio inteiro; %d chunk(s) anterior(es) descartado(s).",
             session_id,
-            removidos,
+            removed,
         )
-    return removidos
+    return removed
 
 
 async def save_upload(

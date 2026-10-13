@@ -9,8 +9,8 @@ import httpx
 
 from app.core.config import settings
 from app.core.enums import LLMCallStage
-from app.domain.ports import Auditoria
-from app.domain.text import limpar_transcricao
+from app.domain.ports import Audit
+from app.domain.text import clean_transcript
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ STT_TEMPERATURE = 0.0
 # não volta em segundos, e 4xx é erro nosso. Duas esperas curtas e fixas respeitam o
 # veto do CLAUDE.md §5 a retry agressivo; o LLM não precisa do equivalente — o SDK
 # `openai` já retenta 5xx sozinho, este caminho `httpx` é que não tinha nada.
-ESPERAS_APOS_503_S = (5.0, 15.0)
+WAITS_AFTER_503_S = (5.0, 15.0)
 
 # O Gemini não expõe um endpoint estilo Whisper (/audio/transcriptions): a transcrição
 # é feita pelo modelo multimodal, recebendo o áudio inline junto de uma instrução.
@@ -54,27 +54,27 @@ def _mime_type(path: Path) -> str:
     return MIME_BY_SUFFIX.get(path.suffix.lower(), "audio/mp3")
 
 
-class GeminiTranscritor:
-    """Adaptador do `Transcritor` para a API nativa do Gemini.
+class GeminiTranscriber:
+    """Adaptador do `Transcriber` para a API nativa do Gemini.
 
     Recebe a auditoria em vez de importá-la: é o que impede este módulo — que só precisa
     falar HTTP com o Gemini — de arrastar o SQLAlchemy junto por dependência transitiva.
     """
 
-    def __init__(self, auditoria: Auditoria) -> None:
-        self._auditoria = auditoria
+    def __init__(self, audit: Audit) -> None:
+        self._audit = audit
 
-    async def transcrever(
+    async def transcribe(
         self,
         audio_path: Path | str,
         language: str = "pt",
         presentation_id: uuid.UUID | None = None,
     ) -> str:
-        return await _transcrever(self._auditoria, audio_path, language, presentation_id)
+        return await _transcribe(self._audit, audio_path, language, presentation_id)
 
 
-async def _transcrever(
-    auditoria: Auditoria,
+async def _transcribe(
+    audit: Audit,
     audio_path: Path | str,
     language: str = "pt",
     presentation_id: uuid.UUID | None = None,
@@ -116,30 +116,28 @@ async def _transcrever(
 
     url = f"{settings.GEMINI_API_BASE}/models/{settings.STT_MODEL}:generateContent"
 
-    async with auditoria.medir(
+    async with audit.measure(
         presentation_id=presentation_id,
-        etapa=LLMCallStage.STT,
-        modelo=settings.STT_MODEL,
-        temperatura=STT_TEMPERATURE,
-    ) as uso:
+        stage=LLMCallStage.STT,
+        model=settings.STT_MODEL,
+        temperature=STT_TEMPERATURE,
+    ) as usage:
         async with httpx.AsyncClient(timeout=settings.AI_TIMEOUT_SECONDS) as client:
-            response = await _post_com_retentativa(client, url, payload)
+            response = await _post_with_retry(client, url, payload)
             body = response.json()
 
-        uso.update(_extract_usage(body))
+        usage.update(_extract_usage(body))
         return _extract_text(body)
 
 
-async def _post_com_retentativa(
-    client: httpx.AsyncClient, url: str, payload: dict
-) -> httpx.Response:
+async def _post_with_retry(client: httpx.AsyncClient, url: str, payload: dict) -> httpx.Response:
     """Envia a requisição ao Gemini, retentando apenas o 503 transitório.
 
     Qualquer outro status de erro levanta na hora (`raise_for_status`), preservando o
-    comportamento anterior; esgotadas as esperas de `ESPERAS_APOS_503_S`, o próprio 503
+    comportamento anterior; esgotadas as esperas de `WAITS_AFTER_503_S`, o próprio 503
     levanta e segue o caminho normal de falha — a sessão fica FAILED com a mensagem real.
     """
-    for espera in (*ESPERAS_APOS_503_S, None):
+    for wait in (*WAITS_AFTER_503_S, None):
         response = await client.post(
             url,
             json=payload,
@@ -148,15 +146,15 @@ async def _post_com_retentativa(
                 "x-goog-api-key": settings.GEMINI_API_KEY,
             },
         )
-        if response.status_code != 503 or espera is None:
+        if response.status_code != 503 or wait is None:
             response.raise_for_status()
             return response
 
         logger.warning(
             "Gemini indisponível (503) na transcrição; nova tentativa em %.0f s.",
-            espera,
+            wait,
         )
-        await asyncio.sleep(espera)
+        await asyncio.sleep(wait)
 
     raise AssertionError("inalcançável: a última iteração sempre retorna ou levanta")
 
@@ -168,10 +166,10 @@ def _extract_usage(body: dict) -> dict[str, int | None]:
     mudança lá não pode quebrar a transcrição — no pior caso a auditoria fica sem os
     números daquela chamada.
     """
-    uso = body.get("usageMetadata") or {}
+    usage = body.get("usageMetadata") or {}
     return {
-        "tokens_entrada": uso.get("promptTokenCount"),
-        "tokens_saida": uso.get("candidatesTokenCount"),
+        "input_tokens": usage.get("promptTokenCount"),
+        "output_tokens": usage.get("candidatesTokenCount"),
     }
 
 
@@ -183,4 +181,4 @@ def _extract_text(body: dict) -> str:
         raise RuntimeError(f"Gemini não retornou transcrição. Detalhe: {feedback}")
 
     parts = candidates[0].get("content", {}).get("parts") or []
-    return limpar_transcricao("".join(part.get("text", "") for part in parts))
+    return clean_transcript("".join(part.get("text", "") for part in parts))

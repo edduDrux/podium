@@ -14,7 +14,7 @@ Este módulo não fala com o banco: recebe os modelos e os altera. Quem chama de
 gravar — e é isso que permite testá-lo sem Postgres.
 """
 
-from app.domain.text import limpar_transcricao
+from app.domain.text import clean_transcript
 from app.models.feedback import Feedback
 from app.models.presentation import Presentation
 
@@ -22,11 +22,11 @@ from app.models.presentation import Presentation
 # Mora no JSONB existente por não haver coluna própria — criar uma exigiria migration.
 TRANSCRIPT_KEY = "transcricao"
 
-ORIGEM_CLIENTE = "cliente_vr"
-ORIGEM_SERVIDOR = "servidor"
+ORIGIN_VR_CLIENT = "cliente_vr"
+ORIGIN_SERVER = "servidor"
 
 
-class TranscricaoVaziaError(ValueError):
+class EmptyTranscriptError(ValueError):
     """O cliente mandou uma transcrição sem nenhuma palavra.
 
     Vazio não é reaproveitado pelo pipeline (seria indistinguível de "o modelo não
@@ -35,47 +35,47 @@ class TranscricaoVaziaError(ValueError):
     """
 
 
-def registrar(presentation: Presentation, texto: str, motor: str | None) -> Feedback:
+def register(presentation: Presentation, text: str, engine: str | None) -> Feedback:
     """Guarda a transcrição do cliente na sessão e marca a sua origem.
 
-    Passa pelo mesmo filtro do STT do servidor (`limpar_transcricao`): o texto vindo de
+    Passa pelo mesmo filtro do STT do servidor (`clean_transcript`): o texto vindo de
     fora é dado, e a mesma regra que vale para o Gemini vale para o whisper do headset.
     """
-    limpo = limpar_transcricao(texto or "")
-    if not limpo:
-        raise TranscricaoVaziaError(
+    clean = clean_transcript(text or "")
+    if not clean:
+        raise EmptyTranscriptError(
             "A transcrição enviada não tem nenhuma palavra; o áudio será transcrito no servidor."
         )
 
     feedback = presentation.feedback or Feedback(presentation_id=presentation.id)
-    feedback.transcript = limpo
+    feedback.transcript = clean
 
     metrics = dict(feedback.metrics or {})
-    metrics[TRANSCRIPT_KEY] = descrever(ORIGEM_CLIENTE, motor)
+    metrics[TRANSCRIPT_KEY] = describe(ORIGIN_VR_CLIENT, engine)
     feedback.metrics = metrics
 
     presentation.feedback = feedback
     return feedback
 
 
-def descrever(origem: str, motor: str | None) -> dict[str, str | None]:
+def describe(origin: str, engine: str | None) -> dict[str, str | None]:
     """Formato único do registro de origem, para o pipeline e para a resposta."""
-    return {"origem": origem, "motor": (motor or "").strip() or None}
+    return {"origem": origin, "motor": (engine or "").strip() or None}
 
 
-def origem_registrada(feedback: Feedback | None) -> dict[str, str | None] | None:
+def recorded_origin(feedback: Feedback | None) -> dict[str, str | None] | None:
     """Lê a origem gravada, tolerando feedback anterior a este registro."""
     if feedback is None:
         return None
-    dados = (feedback.metrics or {}).get(TRANSCRIPT_KEY)
-    if not isinstance(dados, dict) or not dados.get("origem"):
+    data = (feedback.metrics or {}).get(TRANSCRIPT_KEY)
+    if not isinstance(data, dict) or not data.get("origem"):
         return None
-    return {"origem": str(dados["origem"]), "motor": dados.get("motor")}
+    return {"origem": str(data["origem"]), "motor": data.get("motor")}
 
 
-def rotulo(origem: dict[str, str | None] | None) -> str | None:
+def label(origin: dict[str, str | None] | None) -> str | None:
     """Texto curto para o contrato da API: `cliente_vr (whisper base)` ou `servidor`."""
-    if origem is None:
+    if origin is None:
         return None
-    motor = origem.get("motor")
-    return f"{origem['origem']} ({motor})" if motor else origem["origem"]
+    engine = origin.get("motor")
+    return f"{origin['origem']} ({engine})" if engine else origin["origem"]

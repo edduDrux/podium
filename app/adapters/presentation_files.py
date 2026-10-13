@@ -74,5 +74,5 @@ def has_extractable_text(slides_text: str) -> bool:
     caractere solto em cada uma passaria pelo limiar sem ter material nenhum, e um deck
     legítimo de um slide curto seria recusado com uma mensagem que fala de imagem.
     """
-    conteudo = sum(len(texto) for texto in slides.parse(slides_text).values())
-    return conteudo >= MIN_EXTRACTABLE_CHARS
+    content = sum(len(text) for text in slides.parse(slides_text).values())
+    return content >= MIN_EXTRACTABLE_CHARS

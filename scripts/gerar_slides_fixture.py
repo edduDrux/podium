@@ -17,7 +17,7 @@ from pathlib import Path
 
 import fitz  # PyMuPDF
 
-DESTINO = Path("storage/_fixtures/tcc_slides.pdf")
+DESTINATION = Path("storage/_fixtures/tcc_slides.pdf")
 
 SLIDES: list[list[str]] = [
     [
@@ -64,29 +64,29 @@ SLIDES: list[list[str]] = [
 ]
 
 
-def gerar(destino: Path = DESTINO) -> Path:
-    destino.parent.mkdir(parents=True, exist_ok=True)
+def generate(destination: Path = DESTINATION) -> Path:
+    destination.parent.mkdir(parents=True, exist_ok=True)
 
-    documento = fitz.open()
-    for linhas in SLIDES:
+    document = fitz.open()
+    for lines in SLIDES:
         # 720x540 = 4:3, proporção de slide.
-        pagina = documento.new_page(width=720, height=540)
+        page = document.new_page(width=720, height=540)
         y = 95
-        for indice, linha in enumerate(linhas):
-            if linha:
-                pagina.insert_text(
+        for index, line in enumerate(lines):
+            if line:
+                page.insert_text(
                     (55, y),
-                    linha,
-                    fontsize=24 if indice == 0 else 15,
+                    line,
+                    fontsize=24 if index == 0 else 15,
                     fontname="helv",
                 )
-            y += 42 if indice == 0 else 30
+            y += 42 if index == 0 else 30
 
-    documento.save(str(destino))
-    documento.close()
-    return destino
+    document.save(str(destination))
+    document.close()
+    return destination
 
 
 if __name__ == "__main__":
-    caminho = gerar()
-    print(f"PDF gerado: {caminho} ({len(SLIDES)} slides)")
+    path = generate()
+    print(f"PDF gerado: {path} ({len(SLIDES)} slides)")

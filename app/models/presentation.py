@@ -31,7 +31,7 @@ class Presentation(Base, TimestampMixin):
 
     scenario: Mapped[ScenarioType] = mapped_column(
         SAEnum(ScenarioType, name="scenario_type"),
-        default=ScenarioType.SALA_DE_AULA,
+        default=ScenarioType.CLASSROOM,
         nullable=False,
     )
     persona: Mapped[PersonaType] = mapped_column(

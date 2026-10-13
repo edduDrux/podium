@@ -7,76 +7,74 @@ fala sobre feijoada): o esperado é cobertura perto de zero e alerta de descolam
 
 from app.domain import coverage
 
-LIMIARES = {
-    "limiar_apresentado": 0.6,
-    "limiar_parcial": 0.3,
-    "limiar_alerta": 0.15,
+THRESHOLDS = {
+    "presented_threshold": 0.6,
+    "partial_threshold": 0.3,
+    "alert_threshold": 0.15,
 }
 
 
-def _avaliar(slides: dict[int, str], transcript: str) -> coverage.ResultadoCobertura:
-    return coverage.avaliar(slides, transcript, **LIMIARES)
+def _evaluate(slides: dict[int, str], transcript: str) -> coverage.CoverageResult:
+    return coverage.evaluate(slides, transcript, **THRESHOLDS)
 
 
-def test_slide_falado_por_inteiro_e_apresentado():
-    resultado = _avaliar(
+def test_fully_spoken_slide_is_presented():
+    result = _evaluate(
         {1: "Metodologia da pesquisa experimental"},
         "hoje explico a metodologia da nossa pesquisa experimental em detalhes",
     )
-    avaliacao = resultado.slides[0]
+    verdict = result.slides[0]
 
-    assert avaliacao.classificacao == coverage.APRESENTADO
-    assert avaliacao.score == 1.0
-    assert avaliacao.termos_ausentes == []
-    assert resultado.alerta_descolamento is False
+    assert verdict.classification == coverage.PRESENTED
+    assert verdict.score == 1.0
+    assert verdict.missing_terms == []
+    assert result.mismatch_alert is False
 
 
-def test_slide_ignorado_e_nao_apresentado_com_evidencia():
-    resultado = _avaliar(
+def test_ignored_slide_is_not_presented_with_evidence():
+    result = _evaluate(
         {1: "Arquitetura hexagonal com adaptadores"},
         "falei sobre um assunto completamente diferente hoje",
     )
-    avaliacao = resultado.slides[0]
+    verdict = result.slides[0]
 
-    assert avaliacao.classificacao == coverage.NAO_APRESENTADO
-    assert avaliacao.score == 0.0
+    assert verdict.classification == coverage.NOT_PRESENTED
+    assert verdict.score == 0.0
     # A evidência auditável: exatamente o que estava lá e não foi dito.
-    assert avaliacao.termos_ausentes == ["adaptadores", "arquitetura", "hexagonal"]
+    assert verdict.missing_terms == ["adaptadores", "arquitetura", "hexagonal"]
 
 
-def test_slide_metade_falado_e_parcial():
-    resultado = _avaliar(
+def test_half_spoken_slide_is_partial():
+    result = _evaluate(
         {1: "Resultados quantitativos impressoes qualitativas"},
         "os resultados quantitativos foram bons",
     )
-    avaliacao = resultado.slides[0]
+    verdict = result.slides[0]
 
-    assert avaliacao.classificacao == coverage.PARCIAL
-    assert avaliacao.termos_presentes == 2
-    assert avaliacao.termos_totais == 4
+    assert verdict.classification == coverage.PARTIAL
+    assert verdict.present_terms == 2
+    assert verdict.total_terms == 4
 
 
-def test_adversarial_material_e_fala_descolados():
+def test_adversarial_material_and_speech_mismatch():
     """A miniatura do teste da feijoada: nada do material aparece na fala."""
     slides = {
         1: "Simulador de apresentacoes academicas em realidade virtual",
         2: "Camada de aterramento contra alucinacao do modelo",
         3: "Metricas de ritmo e pausas derivadas do audio",
     }
-    fala = (
+    speech = (
         "primeiro voce deixa o feijao de molho na vespera depois refoga a cebola "
         "o alho e a linguica e cozinha tudo na panela de pressao ate engrossar"
     )
-    resultado = _avaliar(slides, fala)
+    result = _evaluate(slides, speech)
 
-    assert resultado.percentual_coberto == 0.0
-    assert resultado.alerta_descolamento is True
-    assert all(
-        avaliacao.classificacao == coverage.NAO_APRESENTADO for avaliacao in resultado.slides
-    )
+    assert result.coverage_ratio == 0.0
+    assert result.mismatch_alert is True
+    assert all(verdict.classification == coverage.NOT_PRESENTED for verdict in result.slides)
 
 
-def test_termo_estrutural_nao_e_cobrado():
+def test_structural_term_is_not_required():
     """Termo em todos os slides é template (título, autor), não conteúdo."""
     slides = {
         1: "PODIUM introducao ao problema",
@@ -84,41 +82,41 @@ def test_termo_estrutural_nao_e_cobrado():
         3: "PODIUM resultados obtidos",
         4: "PODIUM conclusoes finais",
     }
-    resultado = _avaliar(slides, "falei de outra coisa qualquer")
+    result = _evaluate(slides, "falei de outra coisa qualquer")
 
-    ausentes = {termo for avaliacao in resultado.slides for termo in avaliacao.termos_ausentes}
-    assert "podium" not in ausentes
-    assert "metodologia" in ausentes
+    missing = {term for verdict in result.slides for term in verdict.missing_terms}
+    assert "podium" not in missing
+    assert "metodologia" in missing
 
 
-def test_plural_simples_conta_como_presente():
-    resultado = _avaliar(
+def test_simple_plural_counts_as_present():
+    result = _evaluate(
         {1: "As metodologias empregadas"},
         "a metodologia empregada foi consistente",
     )
-    assert resultado.slides[0].score == 1.0
+    assert result.slides[0].score == 1.0
 
 
-def test_stopword_e_token_curto_nao_viram_termo():
-    resultado = _avaliar({1: "Para que os de um teste"}, "")
-    avaliacao = resultado.slides[0]
+def test_stopwords_and_short_tokens_are_not_terms():
+    result = _evaluate({1: "Para que os de um teste"}, "")
+    verdict = result.slides[0]
 
     # Só "teste" sobrevive: "para"/"que" são stopwords, o resto é curto demais.
-    assert avaliacao.termos_totais == 1
-    assert avaliacao.termos_ausentes == ["teste"]
+    assert verdict.total_terms == 1
+    assert verdict.missing_terms == ["teste"]
 
 
-def test_slide_sem_termos_nao_e_acusado():
-    resultado = _avaliar({1: "de a o em"}, "qualquer fala")
-    avaliacao = resultado.slides[0]
+def test_slide_without_terms_is_not_flagged():
+    result = _evaluate({1: "de a o em"}, "qualquer fala")
+    verdict = result.slides[0]
 
-    assert avaliacao.classificacao == coverage.SEM_TERMOS
-    assert avaliacao.score is None
+    assert verdict.classification == coverage.NO_TERMS
+    assert verdict.score is None
 
 
-def test_material_vazio_nao_liga_alerta():
+def test_empty_material_does_not_raise_the_alert():
     """Sem termo mensurável não há evidência de descolamento — alerta exige medição."""
-    resultado = _avaliar({}, "uma fala qualquer")
+    result = _evaluate({}, "uma fala qualquer")
 
-    assert resultado.percentual_coberto == 0.0
-    assert resultado.alerta_descolamento is False
+    assert result.coverage_ratio == 0.0
+    assert result.mismatch_alert is False

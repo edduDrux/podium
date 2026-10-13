@@ -107,13 +107,13 @@ def presentation(pdf_file) -> Presentation:
     """Sessão recém-criada sobre um PDF de duas páginas; cada teste ajusta o status."""
     return Presentation(
         id=uuid.uuid4(),
-        scenario=ScenarioType.SALA_DE_AULA,
-        persona=PersonaType.PROFESSOR_RIGOROSO,
+        scenario=ScenarioType.CLASSROOM,
+        persona=PersonaType.STRICT_PROFESSOR,
         status=PresentationStatus.CREATED,
         file_path=str(pdf_file),
         file_filename="presentation.pdf",
         file_type=SourceFileType.PDF,
-        slides_text=slides.montar([slides.bloco(1, "A metodologia experimental adotada")]),
+        slides_text=slides.assemble([slides.block(1, "A metodologia experimental adotada")]),
         created_at=datetime.now(UTC),
     )
 

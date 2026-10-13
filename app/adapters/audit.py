@@ -23,17 +23,17 @@ logger = logging.getLogger(__name__)
 PROVIDER_GEMINI = "gemini"
 
 
-async def registrar(
+async def register(
     presentation_id: uuid.UUID,
-    etapa: LLMCallStage,
+    stage: LLMCallStage,
     provider: str,
-    modelo: str,
-    temperatura: float,
-    latencia_ms: int,
-    sucesso: bool,
-    tokens_entrada: int | None = None,
-    tokens_saida: int | None = None,
-    erro: str | None = None,
+    model: str,
+    temperature: float,
+    latency_ms: int,
+    success: bool,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    error: str | None = None,
 ) -> None:
     """Grava uma chamada de IA. Engole qualquer falha, apenas registrando em log."""
     try:
@@ -41,87 +41,87 @@ async def registrar(
             db.add(
                 LLMCall(
                     presentation_id=presentation_id,
-                    etapa=etapa,
+                    stage=stage,
                     provider=provider,
-                    modelo=modelo,
-                    temperatura=temperatura,
-                    tokens_entrada=tokens_entrada,
-                    tokens_saida=tokens_saida,
-                    latencia_ms=latencia_ms,
-                    sucesso=sucesso,
-                    erro=erro,
+                    model=model,
+                    temperature=temperature,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    latency_ms=latency_ms,
+                    success=success,
+                    error=error,
                 )
             )
             await db.commit()
     except Exception:
         logger.exception(
             "Falha ao auditar a chamada de IA (%s) da sessão %s. O pipeline segue.",
-            etapa,
+            stage,
             presentation_id,
         )
 
 
-class AuditoriaBanco:
-    """Implementação de `Auditoria` que grava em `llm_calls`.
+class DatabaseAudit:
+    """Implementação de `Audit` que grava em `llm_calls`.
 
     É a única peça que conhece o banco nesta cadeia. Os adaptadores de IA recebem esta
     instância pela porta e não sabem onde — nem se — o registro é persistido.
     """
 
-    def medir(
+    def measure(
         self,
         presentation_id: uuid.UUID | None,
-        etapa: LLMCallStage,
-        modelo: str,
-        temperatura: float,
+        stage: LLMCallStage,
+        model: str,
+        temperature: float,
     ):
-        return medir(presentation_id, etapa, modelo, temperatura)
+        return measure(presentation_id, stage, model, temperature)
 
 
 @asynccontextmanager
-async def medir(
+async def measure(
     presentation_id: uuid.UUID | None,
-    etapa: LLMCallStage,
-    modelo: str,
-    temperatura: float,
+    stage: LLMCallStage,
+    model: str,
+    temperature: float,
     provider: str = PROVIDER_GEMINI,
 ):
     """Cronometra o bloco e grava o registro de auditoria, tendo ele falhado ou não.
 
     Cede um dicionário mutável onde o chamador deposita os tokens assim que a resposta
-    chega (`uso["tokens_entrada"] = ...`). É feito assim porque o número de tokens só
+    chega (`usage["input_tokens"] = ...`). É feito assim porque o número de tokens só
     existe depois da chamada, mas o registro precisa sair mesmo quando ela levanta —
     e nesse caso a contagem simplesmente fica nula.
 
     `presentation_id` nulo desliga a auditoria: permite chamar os serviços fora de uma
     sessão (script, teste manual) sem violar a FK.
     """
-    uso: dict[str, int | None] = {"tokens_entrada": None, "tokens_saida": None}
-    inicio = time.perf_counter()
-    erro: str | None = None
+    usage: dict[str, int | None] = {"input_tokens": None, "output_tokens": None}
+    start = time.perf_counter()
+    error: str | None = None
 
     try:
-        yield uso
+        yield usage
     # `BaseException`, e não `Exception`: um shutdown ou um restart do `--reload` cancela a
     # tarefa com `CancelledError`, que não herda de `Exception`. Capturando só `Exception`,
-    # a chamada interrompida entraria em `llm_calls` como `sucesso=True` e com a latência
+    # a chamada interrompida entraria em `llm_calls` como `success=True` e com a latência
     # truncada no instante do cancelamento — contaminando justamente as duas métricas que
     # esta tabela existe para produzir.
     except BaseException as exc:
-        erro = f"{type(exc).__name__}: {exc}"
+        error = f"{type(exc).__name__}: {exc}"
         raise
     finally:
-        latencia_ms = int((time.perf_counter() - inicio) * 1000)
+        latency_ms = int((time.perf_counter() - start) * 1000)
         if presentation_id is not None:
-            await registrar(
+            await register(
                 presentation_id=presentation_id,
-                etapa=etapa,
+                stage=stage,
                 provider=provider,
-                modelo=modelo,
-                temperatura=temperatura,
-                latencia_ms=latencia_ms,
-                sucesso=erro is None,
-                tokens_entrada=uso.get("tokens_entrada"),
-                tokens_saida=uso.get("tokens_saida"),
-                erro=erro,
+                model=model,
+                temperature=temperature,
+                latency_ms=latency_ms,
+                success=error is None,
+                input_tokens=usage.get("input_tokens"),
+                output_tokens=usage.get("output_tokens"),
+                error=error,
             )

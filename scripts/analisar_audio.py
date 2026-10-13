@@ -21,28 +21,28 @@ def main() -> int:
         print("Uso: python -m scripts.analisar_audio <audio> [transcricao.txt]")
         return 2
 
-    caminho = Path(sys.argv[1])
-    if not caminho.is_file():
-        print(f"Arquivo não encontrado: {caminho}")
+    path = Path(sys.argv[1])
+    if not path.is_file():
+        print(f"Arquivo não encontrado: {path}")
         return 2
 
     transcript = ""
     if len(sys.argv) == 3:
         transcript = Path(sys.argv[2]).read_text(encoding="utf-8")
 
-    metricas = audio.analyze_form(caminho, transcript)
+    delivery = audio.analyze_delivery(path, transcript)
 
-    print(f"duração        : {metricas.duration_seconds} s")
-    print(f"tempo de fala  : {metricas.speech_seconds} s (duração menos as pausas)")
+    print(f"duração        : {delivery.duration_seconds} s")
+    print(f"tempo de fala  : {delivery.speech_seconds} s (duração menos as pausas)")
     print(
-        f"pausas         : {metricas.pause_count} "
-        f"(total {metricas.total_pause_seconds} s, maior {metricas.longest_pause_seconds} s)"
+        f"pausas         : {delivery.pause_count} "
+        f"(total {delivery.total_pause_seconds} s, maior {delivery.longest_pause_seconds} s)"
     )
     if transcript:
         # O ritmo é EFETIVO: palavras por minuto de fala, não por minuto de arquivo —
         # quem pausa muito não aparece como lento.
-        print(f"palavras       : {metricas.word_count}")
-        print(f"ritmo          : {metricas.words_per_minute} palavras/min")
+        print(f"palavras       : {delivery.word_count}")
+        print(f"ritmo          : {delivery.words_per_minute} palavras/min")
     else:
         print("ritmo          : (passe a transcrição como 2º argumento para calcular)")
     return 0
