@@ -10,14 +10,9 @@ import pytest
 
 from app.core.config import settings
 from app.core.enums import PresentationStatus
+from tests.api.conftest import make_wav
 
 URL = "/api/v1/presentations/{id}/audio"
-
-
-@pytest.fixture(autouse=True)
-def isolated_storage(tmp_path, monkeypatch):
-    """O upload grava em disco: aqui, numa pasta descartável."""
-    monkeypatch.setattr(settings, "STORAGE_DIR", str(tmp_path / "storage"))
 
 
 def _audio_file() -> dict:
@@ -49,3 +44,16 @@ async def test_audio_after_analysis_is_accepted_for_reanalysis(
     assert response.status_code == 200
     assert presentation.status == PresentationStatus.AUDIO_RECEIVED
     assert db_session.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_audio_over_the_duration_limit_is_413(client, presentation, tmp_path, monkeypatch):
+    """Áudio inteiro tem a duração conferida já no upload."""
+    monkeypatch.setattr(settings, "MAX_AUDIO_DURATION_MINUTES", 0)
+    wav = make_wav(tmp_path / "speech.wav")
+
+    response = await client.post(
+        URL.format(id=presentation.id), files={"file": ("fala.wav", wav.read_bytes(), "audio/wav")}
+    )
+
+    assert response.status_code == 413
