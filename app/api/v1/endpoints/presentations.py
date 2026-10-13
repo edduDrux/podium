@@ -49,7 +49,7 @@ def _garantir_duracao_permitida(duration: float) -> None:
     max_seconds = settings.MAX_AUDIO_DURATION_MINUTES * 60
     if duration > max_seconds:
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail=(
                 f"Áudio de {duration / 60:.1f} min excede o limite de "
                 f"{settings.MAX_AUDIO_DURATION_MINUTES} min do MVP."
@@ -87,16 +87,14 @@ async def init_presentation(
     try:
         await storage_service.save_upload(file, file_path, max_bytes=settings.max_upload_size_bytes)
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=str(exc)) from exc
 
     # PyMuPDF e python-pptx são síncronos: no event loop, um deck grande congelaria as
     # outras requisições durante a leitura.
     if not await run_in_threadpool(slides_service.is_valid, file_path, file_type):
         file_path.unlink(missing_ok=True)
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Não foi possível ler o arquivo {file_type.upper()} enviado.",
         )
 
@@ -108,7 +106,7 @@ async def init_presentation(
     if not slides_service.has_extractable_text(slides_text):
         file_path.unlink(missing_ok=True)
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"O arquivo {file_type.upper()} foi lido, mas quase não tem texto "
                 "extraível — as páginas parecem ser apenas imagens. A análise de conteúdo "
@@ -267,7 +265,7 @@ async def analyze_presentation(
         # avisa o Cliente VR na hora, em vez de deixar o pipeline morrer em segundo plano.
         logger.warning("Áudio ilegível na sessão %s: %s", presentation.id, exc)
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Não foi possível decodificar o áudio enviado para esta sessão.",
         ) from exc
 
@@ -340,7 +338,7 @@ async def submit_transcript(
         feedback = transcript_service.registrar(presentation, corpo.transcript, corpo.engine)
     except transcript_service.TranscricaoVaziaError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
 
     db.add(feedback)
