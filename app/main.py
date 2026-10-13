@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import CursorResult, update
 
 from app.adapters import storage
+from app.api.errors import register_error_handlers
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, engine
@@ -113,6 +114,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+register_error_handlers(app)
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
 

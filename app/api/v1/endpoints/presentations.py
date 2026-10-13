@@ -20,6 +20,8 @@ from app.adapters import audio, presentation_files, slide_renderer, storage
 from app.api.deps import CurrentPresentation, DbSession
 from app.core.config import settings
 from app.core.enums import PersonaType, PresentationStatus, ScenarioType
+from app.domain import session_lifecycle
+from app.domain.session_lifecycle import Action
 from app.models.presentation import Presentation
 from app.schemas.feedback import FeedbackResponse
 from app.schemas.presentation import (
@@ -145,14 +147,7 @@ async def upload_audio(
         bool, Form(description="True para gravar como mais um pedaço da mesma fala.")
     ] = False,
 ) -> AudioUploadResponse:
-    # Áudio novo devolve a sessão a `audio_received`. Durante a análise isso reabriria a
-    # trava do /analyze — que só recusa sessão em `processing` — e uma segunda análise
-    # rodaria em paralelo com a primeira, sobre um áudio que ela não conhece.
-    if presentation.status == PresentationStatus.PROCESSING:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Esta sessão está sendo analisada; envie o áudio depois que ela terminar.",
-        )
+    session_lifecycle.ensure_allowed(Action.RECEIVE_AUDIO, presentation.status)
 
     suffix = storage.audio_suffix(file.filename)
     duration: float | None = None
@@ -231,6 +226,8 @@ async def analyze_presentation(
     arriscaria timeout no Cliente VR. O VR acompanha pela `poll_url` até o status
     virar `completed` (ou `failed`) e então busca o feedback.
     """
+    session_lifecycle.ensure_allowed(Action.ANALYZE, presentation.status)
+
     chunks = storage.list_audio_chunks(presentation.id)
     audio_path = presentation.audio_path
 
@@ -324,11 +321,7 @@ async def submit_transcript(
     Sem estado novo no ciclo de vida: a sessão segue `created`/`audio_received`, e a
     análise decide pelo conteúdo, como já faz com uma transcrição reaproveitada.
     """
-    if presentation.status == PresentationStatus.PROCESSING:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Esta sessão está sendo analisada; envie a transcrição antes do /analyze.",
-        )
+    session_lifecycle.ensure_allowed(Action.RECEIVE_TRANSCRIPT, presentation.status)
 
     try:
         feedback = transcript_service.register(presentation, body.transcript, body.engine)
@@ -436,28 +429,11 @@ async def get_presentation(presentation: CurrentPresentation) -> PresentationRes
 async def get_feedback(presentation: CurrentPresentation) -> FeedbackResponse:
     """Devolve o Feedback Duplo de uma análise concluída.
 
-    Decide pelo status, e não pela existência da linha em `feedbacks`: ela pode existir
-    antes da análise (transcrição enviada pelo headset) ou depois de um áudio novo (com
-    as perguntas da fala anterior). Devolvê-la com 200 seria indistinguível de uma análise
-    que terminou sem perguntas aprovadas. O 409 diz ao Cliente VR que a sessão existe,
-    mas ainda não chegou ao fim.
+    Decide pelo status, e não pela existência da linha em `feedbacks` (o porquê está em
+    `app.domain.session_lifecycle`). Fora de `completed`, o 409 diz ao Cliente VR que a
+    sessão existe, mas ainda não chegou ao fim.
     """
-    if presentation.status == PresentationStatus.FAILED:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "A análise desta sessão falhou. O motivo está em `error_message`, no "
-                "GET /presentations/{id}; chame /analyze para tentar de novo."
-            ),
-        )
-    if presentation.status != PresentationStatus.COMPLETED:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"O feedback ainda não está disponível (status: {presentation.status}). "
-                "Chame /analyze e acompanhe pelo GET /presentations/{id} até 'completed'."
-            ),
-        )
+    session_lifecycle.ensure_allowed(Action.READ_FEEDBACK, presentation.status)
     if presentation.feedback is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

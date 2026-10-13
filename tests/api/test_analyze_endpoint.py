@@ -45,6 +45,7 @@ async def test_session_without_audio_is_409(client, presentation, dispatched):
 async def test_undecodable_audio_is_422(client, presentation, tmp_path, dispatched):
     junk = tmp_path / "speech.wav"
     junk.write_bytes(b"nao e audio de verdade")
+    presentation.status = PresentationStatus.AUDIO_RECEIVED
     presentation.audio_path = str(junk)
 
     response = await client.post(URL.format(id=presentation.id))
