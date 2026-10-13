@@ -46,3 +46,15 @@ class PresentationStatus(StrEnum):
     PROCESSING = "processing"  # STT + LLM em andamento
     COMPLETED = "completed"  # feedback duplo disponível
     FAILED = "failed"
+
+
+class AnalysisMode(StrEnum):
+    """Quanto da apresentação a análise cobre.
+
+    `full` cruza slides e fala (cobertura, perguntas ancoradas no slide ou na fala) e
+    exige áudio; `basic` analisa só o que foi dito — sem slides no prompt e sem
+    cobertura — e aceita a transcrição do headset, o áudio ou os dois (DECISOES §11).
+    """
+
+    BASIC = "basic"
+    FULL = "full"

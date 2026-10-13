@@ -1,10 +1,12 @@
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy import ForeignKey, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.enums import AnalysisMode
 from app.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
@@ -22,6 +24,15 @@ class Feedback(Base, TimestampMixin):
         ForeignKey("presentations.id", ondelete="CASCADE"),
         unique=True,
         index=True,
+    )
+
+    # Coluna própria, e não chave do JSONB: é a dimensão pela qual o relatório compara
+    # os modos. Feedback anterior aos modos foi uma análise completa.
+    analysis_mode: Mapped[AnalysisMode] = mapped_column(
+        SAEnum(AnalysisMode, name="analysis_mode"),
+        default=AnalysisMode.FULL,
+        server_default="FULL",
+        nullable=False,
     )
 
     # Avaliação de CONTEÚDO
