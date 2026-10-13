@@ -11,19 +11,6 @@ from app.core.enums import (
 )
 
 
-class PresentationInitRequest(BaseModel):
-    """Campos do multipart/form-data em POST /presentations/init (além do PDF)."""
-
-    scenario: ScenarioType = Field(
-        default=ScenarioType.SALA_DE_AULA,
-        description="Cenário VR. No MVP, apenas 'sala_de_aula'.",
-    )
-    persona: PersonaType = Field(description="Persona que a banca (LLM) vai assumir.")
-    user_id: uuid.UUID | None = Field(
-        default=None, description="Opcional no MVP — sessões anônimas são aceitas."
-    )
-
-
 class PresentationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

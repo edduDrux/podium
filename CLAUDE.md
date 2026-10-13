@@ -71,7 +71,7 @@ no `/audio` a invalida (DECISOES §9).
 docker compose up --build -d                      # podium_db + podium_api
 docker compose exec api alembic upgrade head
 docker compose exec api pip install -r requirements-dev.txt   # 1x por container
-docker compose exec api python -m pytest tests/   # 49 testes, sem rede/cota/banco
+docker compose exec api python -m pytest tests/   # 81 testes, sem rede/cota/banco
 docker compose exec api ruff check .
 ```
 

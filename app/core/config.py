@@ -18,7 +18,9 @@ class Settings(BaseSettings):
     # --- Aplicação ---
     PROJECT_NAME: str = "PODIUM API"
     ENVIRONMENT: str = "development"
-    DEBUG: bool = True
+    # Desligado por padrão: ligado, despeja todo SQL no log (`echo` da engine) e baixa o
+    # nível do logging. O `.env` de desenvolvimento liga explicitamente.
+    DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
 
     # --- Banco de Dados ---
@@ -39,8 +41,10 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     LLM_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     GEMINI_API_BASE: str = "https://generativelanguage.googleapis.com/v1beta"
-    LLM_MODEL: str = "gemini-flash-latest"
-    STT_MODEL: str = "gemini-flash-latest"
+    # `gemini-flash-latest` falhou em 7/7 chamadas de STT por 503 (DECISOES §8); um
+    # default que já se mostrou indisponível é armadilha para quem sobe sem `.env`.
+    LLM_MODEL: str = "gemini-3.5-flash"
+    STT_MODEL: str = "gemini-3.5-flash"
 
     # A tarefa da banca é extrair e cobrar o que está no material, não variar
     # criativamente — e criatividade, aqui, se manifesta como invenção.
