@@ -17,13 +17,7 @@ gravar — e é isso que permite testá-lo sem Postgres.
 from app.domain.text import clean_transcript
 from app.models.feedback import Feedback
 from app.models.presentation import Presentation
-
-# Chave, no JSONB de métricas, que registra de onde veio a transcrição desta sessão.
-# Mora no JSONB existente por não haver coluna própria — criar uma exigiria migration.
-TRANSCRIPT_KEY = "transcript_source"
-
-ORIGIN_VR_CLIENT = "vr_client"
-ORIGIN_SERVER = "server"
+from app.services import feedback_record
 
 
 class EmptyTranscriptError(ValueError):
@@ -48,34 +42,7 @@ def register(presentation: Presentation, text: str, engine: str | None) -> Feedb
         )
 
     feedback = presentation.feedback or Feedback(presentation_id=presentation.id)
-    feedback.transcript = clean
-
-    metrics = dict(feedback.metrics or {})
-    metrics[TRANSCRIPT_KEY] = describe(ORIGIN_VR_CLIENT, engine)
-    feedback.metrics = metrics
+    feedback_record.write_client_transcript(feedback, clean, engine)
 
     presentation.feedback = feedback
     return feedback
-
-
-def describe(origin: str, engine: str | None) -> dict[str, str | None]:
-    """Formato único do registro de origem, para o pipeline e para a resposta."""
-    return {"origin": origin, "engine": (engine or "").strip() or None}
-
-
-def recorded_origin(feedback: Feedback | None) -> dict[str, str | None] | None:
-    """Lê a origem gravada, tolerando feedback anterior a este registro."""
-    if feedback is None:
-        return None
-    data = (feedback.metrics or {}).get(TRANSCRIPT_KEY)
-    if not isinstance(data, dict) or not data.get("origin"):
-        return None
-    return {"origin": str(data["origin"]), "engine": data.get("engine")}
-
-
-def label(origin: dict[str, str | None] | None) -> str | None:
-    """Texto curto para o contrato da API: `vr_client (whisper base)` ou `server`."""
-    if origin is None:
-        return None
-    engine = origin.get("engine")
-    return f"{origin['origin']} ({engine})" if engine else origin["origin"]

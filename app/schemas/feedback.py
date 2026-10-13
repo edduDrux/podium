@@ -2,6 +2,7 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
+from app.domain.coverage import CoverageResult
 from app.domain.delivery import DeliveryMetrics
 from app.domain.panel import Question
 
@@ -66,6 +67,15 @@ class CoverageReportResponse(BaseModel):
     # Material e fala descolados (o caso do teste adversarial: 100% do material ficou
     # por apresentar).
     mismatch_alert: bool = False
+
+    @classmethod
+    def from_result(cls, result: CoverageResult) -> "CoverageReportResponse":
+        """Converte o resultado do domínio no contrato da API (e no formato gravado)."""
+        return cls(
+            slides=[SlideCoverageResponse(**verdict._asdict()) for verdict in result.slides],
+            coverage_ratio=result.coverage_ratio,
+            mismatch_alert=result.mismatch_alert,
+        )
 
 
 class DeliveryMetricsResponse(BaseModel):

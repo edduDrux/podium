@@ -9,7 +9,7 @@ sobrevive ao pipeline até a resposta da API.
 import pytest
 
 from app.models.feedback import Feedback
-from app.services import analysis_service, transcript_service
+from app.services import analysis_service, feedback_record, transcript_service
 from tests.services.conftest import FakeDatabase, FakeLanguageModel, SpyTranscriber
 
 
@@ -20,7 +20,7 @@ def test_register_stores_clean_text_and_origin(presentation):
 
     assert presentation.feedback is feedback
     assert feedback.transcript == "falei sobre a metodologia experimental"
-    assert transcript_service.recorded_origin(feedback) == {
+    assert feedback_record.recorded_origin(feedback) == {
         "origin": "vr_client",
         "engine": "whisper.cpp base",
     }
@@ -35,7 +35,7 @@ def test_register_replaces_previous_transcript_keeping_the_feedback(presentation
 
     assert feedback is previous
     assert feedback.transcript == "versão nova"
-    assert transcript_service.recorded_origin(feedback)["engine"] is None
+    assert feedback_record.recorded_origin(feedback)["engine"] is None
 
 
 @pytest.mark.parametrize("text", ["", "   ", "🥩 🍲"])
@@ -47,16 +47,16 @@ def test_register_rejects_transcript_without_words(presentation, text):
 
 
 def test_origin_tolerates_old_feedback():
-    assert transcript_service.recorded_origin(None) is None
-    assert transcript_service.recorded_origin(Feedback(metrics={})) is None
-    assert transcript_service.recorded_origin(Feedback(metrics={"transcript_source": "x"})) is None
+    assert feedback_record.recorded_origin(None) is None
+    assert feedback_record.recorded_origin(Feedback(metrics={})) is None
+    assert feedback_record.recorded_origin(Feedback(metrics={"transcript_source": "x"})) is None
 
 
 def test_label():
-    assert transcript_service.label(None) is None
-    assert transcript_service.label({"origin": "server", "engine": None}) == "server"
+    assert feedback_record.label(None) is None
+    assert feedback_record.label({"origin": "server", "engine": None}) == "server"
     assert (
-        transcript_service.label({"origin": "vr_client", "engine": "whisper base"})
+        feedback_record.label({"origin": "vr_client", "engine": "whisper base"})
         == "vr_client (whisper base)"
     )
 
@@ -66,15 +66,14 @@ async def test_pipeline_uses_the_client_transcript_and_skips_stt(presentation):
     transcript_service.register(presentation, "falei da metodologia experimental", "whisper")
     spy = SpyTranscriber()
 
-    response = await analysis_service.run_pipeline(
-        FakeDatabase(), presentation, spy, FakeLanguageModel()
-    )
+    await analysis_service.run_pipeline(FakeDatabase(), presentation, spy, FakeLanguageModel())
+    response = feedback_record.to_response(presentation)
 
     assert spy.calls == 0
     assert response.transcript == "falei da metodologia experimental"
     assert response.transcript_source == "vr_client (whisper)"
     # A origem sobrevive à regravação das métricas pelo pipeline...
-    assert transcript_service.recorded_origin(presentation.feedback)["origin"] == "vr_client"
+    assert feedback_record.recorded_origin(presentation.feedback)["origin"] == "vr_client"
     # ...sem contaminar as métricas de forma do contrato.
     assert response.delivery_metrics.word_count == 4
 
@@ -83,9 +82,8 @@ async def test_pipeline_uses_the_client_transcript_and_skips_stt(presentation):
 async def test_pipeline_records_the_server_as_origin_when_stt_runs(presentation):
     spy = SpyTranscriber()
 
-    response = await analysis_service.run_pipeline(
-        FakeDatabase(), presentation, spy, FakeLanguageModel()
-    )
+    await analysis_service.run_pipeline(FakeDatabase(), presentation, spy, FakeLanguageModel())
+    response = feedback_record.to_response(presentation)
 
     assert spy.calls == 1
     assert response.transcript_source.startswith("server")
@@ -98,7 +96,7 @@ def test_to_response_exposes_the_stored_origin(presentation):
         metrics={"word_count": 1, "transcript_source": {"origin": "vr_client", "engine": "w"}},
     )
 
-    response = analysis_service.to_response(presentation)
+    response = feedback_record.to_response(presentation)
 
     assert response.transcript_source == "vr_client (w)"
     assert response.delivery_metrics.word_count == 1

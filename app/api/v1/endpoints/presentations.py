@@ -33,7 +33,7 @@ from app.schemas.presentation import (
     TranscriptAcceptedResponse,
     TranscriptSubmission,
 )
-from app.services import analysis_service, transcript_service
+from app.services import analysis_service, feedback_record, transcript_service
 
 logger = logging.getLogger(__name__)
 
@@ -439,4 +439,4 @@ async def get_feedback(presentation: CurrentPresentation) -> FeedbackResponse:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Feedback ainda não disponível. Chame /analyze primeiro.",
         )
-    return analysis_service.to_response(presentation)
+    return feedback_record.to_response(presentation)

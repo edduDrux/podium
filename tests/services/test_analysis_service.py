@@ -20,7 +20,7 @@ from app.adapters import audio
 from app.core.enums import PresentationStatus
 from app.domain.ports import LanguageModel, Transcriber
 from app.models.feedback import Feedback
-from app.services import analysis_service
+from app.services import analysis_service, feedback_record
 from tests.services.conftest import (
     FAKE_SIGNAL,
     GROUNDED_ITEM,
@@ -52,7 +52,8 @@ async def test_happy_path_completes_with_full_feedback(presentation):
         model_answer([GROUNDED_ITEM, INVENTED_ITEM], "Domínio consistente do conteúdo.")
     )
 
-    response = await analysis_service.run_pipeline(db, presentation, FakeTranscriber(), model)
+    await analysis_service.run_pipeline(db, presentation, FakeTranscriber(), model)
+    response = feedback_record.to_response(presentation)
 
     assert presentation.status == PresentationStatus.COMPLETED
     assert [q.question for q in response.questions] == [GROUNDED_ITEM["question"]]
@@ -69,7 +70,8 @@ async def test_invented_question_never_reaches_the_feedback(presentation):
     db = FakeDatabase()
     model = FakeLanguageModel(model_answer([INVENTED_ITEM]))
 
-    response = await analysis_service.run_pipeline(db, presentation, FakeTranscriber(), model)
+    await analysis_service.run_pipeline(db, presentation, FakeTranscriber(), model)
+    response = feedback_record.to_response(presentation)
 
     assert response.questions == []
     assert response.questions_generated == 1
@@ -86,9 +88,8 @@ async def test_empty_panel_completes_the_session_instead_of_failing(presentation
     """
     model = FakeLanguageModel(model_answer([INVENTED_ITEM] * 3))
 
-    response = await analysis_service.run_pipeline(
-        FakeDatabase(), presentation, FakeTranscriber(), model
-    )
+    await analysis_service.run_pipeline(FakeDatabase(), presentation, FakeTranscriber(), model)
+    response = feedback_record.to_response(presentation)
 
     assert presentation.status == PresentationStatus.COMPLETED
     assert response.questions == []
@@ -104,9 +105,10 @@ async def test_empty_panel_completes_the_session_instead_of_failing(presentation
 @pytest.mark.asyncio
 async def test_blocked_model_completes_without_questions(presentation):
     """Provedor que barra a própria chamada é degradação prevista, não falha da sessão."""
-    response = await analysis_service.run_pipeline(
+    await analysis_service.run_pipeline(
         FakeDatabase(), presentation, FakeTranscriber(), BlockedLanguageModel()
     )
+    response = feedback_record.to_response(presentation)
 
     assert presentation.status == PresentationStatus.COMPLETED
     assert response.questions == []
@@ -116,12 +118,13 @@ async def test_blocked_model_completes_without_questions(presentation):
 @pytest.mark.asyncio
 async def test_coverage_comes_out_even_without_questions(presentation):
     """A cobertura é calculada antes e independentemente do LLM."""
-    response = await analysis_service.run_pipeline(
+    await analysis_service.run_pipeline(
         FakeDatabase(),
         presentation,
         FakeTranscriber("hoje eu falei apenas sobre uma receita de feijoada"),
         FakeLanguageModel(),
     )
+    response = feedback_record.to_response(presentation)
 
     coverage = response.slide_coverage
     assert coverage.coverage_ratio == 0.0
@@ -131,9 +134,10 @@ async def test_coverage_comes_out_even_without_questions(presentation):
 
 @pytest.mark.asyncio
 async def test_empty_transcript_does_not_break_the_pipeline(presentation):
-    response = await analysis_service.run_pipeline(
+    await analysis_service.run_pipeline(
         FakeDatabase(), presentation, FakeTranscriber(""), FakeLanguageModel()
     )
+    response = feedback_record.to_response(presentation)
 
     assert presentation.status == PresentationStatus.COMPLETED
     assert response.delivery_metrics.word_count == 0
@@ -161,9 +165,10 @@ async def test_reprocessing_reuses_the_transcript_and_skips_stt(presentation):
     )
     spy = SpyTranscriber()
 
-    response = await analysis_service.run_pipeline(
+    await analysis_service.run_pipeline(
         FakeDatabase(), presentation, spy, FakeLanguageModel(model_answer([GROUNDED_ITEM]))
     )
+    response = feedback_record.to_response(presentation)
 
     assert spy.calls == 0
     assert response.transcript == "falei sobre a metodologia experimental"
