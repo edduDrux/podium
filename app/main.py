@@ -1,10 +1,11 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
+from typing import Any, cast
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import update
+from sqlalchemy import CursorResult, update
 
 from app.api.v1.router import api_router
 from app.core.config import settings
@@ -59,10 +60,13 @@ async def _reconciliar_sessoes_interrompidas() -> None:
         )
         await db.commit()
 
-    if resultado.rowcount:
+    # O `execute` é tipado como `Result` genérico; num UPDATE o objeto é um `CursorResult`,
+    # que é quem tem `rowcount`.
+    reconciliadas = cast(CursorResult[Any], resultado).rowcount
+    if reconciliadas:
         logger.warning(
             "%d sessão(ões) presa(s) em 'processing' foram reconciliadas como 'failed'.",
-            resultado.rowcount,
+            reconciliadas,
         )
 
 

@@ -303,3 +303,20 @@ async def test_pipeline_does_not_block_the_event_loop(presentation, monkeypatch)
     task.cancel()
 
     assert ticks >= 10
+
+
+@pytest.mark.asyncio
+async def test_pipeline_without_audio_fails_with_a_readable_reason(presentation):
+    """Sem áudio, a sessão termina FAILED com o motivo, não com um TypeError do pydub."""
+    presentation.audio_path = None
+
+    with pytest.raises(ValueError):
+        await analysis_service.run_pipeline(
+            BancoFalso(),
+            presentation,
+            TranscritorFalso(),
+            BancaFalsa(ResultadoGeracao([], "", 0, 0)),
+        )
+
+    assert presentation.status == PresentationStatus.FAILED
+    assert presentation.error_message == "A sessão não tem áudio para analisar."

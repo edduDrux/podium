@@ -90,6 +90,12 @@ async def run_pipeline(
     await db.commit()
 
     try:
+        # O /analyze só despacha sessão com áudio. A checagem deixa a precondição explícita:
+        # sem ela, um `None` viraria um TypeError obscuro dentro do pydub.
+        audio_path = presentation.audio_path
+        if audio_path is None:
+            raise ValueError("A sessão não tem áudio para analisar.")
+
         # 1. Transcrição — reaproveitada quando a sessão já tem uma DESTE áudio.
         # O STT é a etapa mais cara do pipeline (tokens proporcionais à duração: 11.019
         # para 436,5 s de áudio, medido na sessão d5caa4fd em 2026-08-30) e a mais lenta
@@ -103,9 +109,7 @@ async def run_pipeline(
             # loop, congelaria todas as requisições enquanto durasse. `asyncio.to_thread`,
             # e não o `run_in_threadpool` dos endpoints, para que o caso de uso não
             # dependa do FastAPI.
-            stt_ready_path = await asyncio.to_thread(
-                audio_service.normalize_for_stt, presentation.audio_path
-            )
+            stt_ready_path = await asyncio.to_thread(audio_service.normalize_for_stt, audio_path)
             transcript = await transcritor.transcrever(
                 stt_ready_path, presentation_id=presentation.id
             )
@@ -126,9 +130,7 @@ async def run_pipeline(
             )
 
         # 2. FORMA: ritmo e pausas
-        metrics = await asyncio.to_thread(
-            audio_service.analyze_form, presentation.audio_path, transcript
-        )
+        metrics = await asyncio.to_thread(audio_service.analyze_form, audio_path, transcript)
 
         # 2.5 COBERTURA: material × transcrição, ANTES e independente do LLM — se a
         # banca degradar para zero perguntas, a resposta a "o que ficou por apresentar?"

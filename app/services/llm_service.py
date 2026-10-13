@@ -3,6 +3,7 @@ import logging
 import uuid
 
 from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletionMessageParam
 from pydantic import ValidationError
 
 from app.core.config import settings
@@ -174,7 +175,7 @@ async def _gerar_perguntas(
             len(transcript or ""),
         )
 
-    messages = [
+    messages: list[ChatCompletionMessageParam] = [
         {
             "role": "system",
             "content": SYSTEM_PROMPT.format(

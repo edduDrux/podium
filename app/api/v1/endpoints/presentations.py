@@ -1,6 +1,6 @@
 import logging
 import uuid
-from typing import Annotated
+from typing import Annotated, Any, cast
 
 from fastapi import (
     APIRouter,
@@ -14,7 +14,7 @@ from fastapi import (
     status,
 )
 from fastapi.concurrency import run_in_threadpool
-from sqlalchemy import update
+from sqlalchemy import CursorResult, update
 
 from app.api.deps import CurrentPresentation, DbSession
 from app.core.config import settings
@@ -238,14 +238,8 @@ async def analyze_presentation(
     virar `completed` (ou `failed`) e então busca o feedback.
     """
     chunks = storage_service.list_audio_chunks(presentation.id)
-
-    if not presentation.audio_path and not chunks:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Nenhum áudio recebido para esta sessão.",
-        )
-
     audio_path = presentation.audio_path
+
     if chunks:
         # Antes de qualquer processamento: os pedaços viram um arquivo único e íntegro.
         # Roda em threadpool porque decodificar e reexportar é trabalho de CPU e
@@ -255,6 +249,12 @@ async def analyze_presentation(
             audio_path = str(await run_in_threadpool(audio_service.concat_chunks, chunks, destino))
         except audio_service.MixedChunkFormatsError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    if not audio_path:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Nenhum áudio recebido para esta sessão.",
+        )
 
     # A duração só é confiável sobre o áudio inteiro: um chunk sozinho não diz nada
     # sobre o tamanho da apresentação.
@@ -276,7 +276,7 @@ async def analyze_presentation(
     # Ler o status e depois escrever deixava uma janela entre as duas operações — dois
     # /analyze simultâneos liam `audio_received`, os dois passavam pelo guard e a análise
     # rodava duas vezes, gastando duas chamadas de LLM e disputando o mesmo feedback.
-    marcada = await db.execute(
+    resultado = await db.execute(
         update(Presentation)
         .where(
             Presentation.id == presentation.id,
@@ -291,7 +291,9 @@ async def analyze_presentation(
     )
     await db.commit()
 
-    # Nenhuma linha atualizada significa que outra requisição chegou primeiro.
+    # O `execute` é tipado como `Result` genérico; num UPDATE o objeto é um `CursorResult`,
+    # que é quem tem `rowcount`. Nenhuma linha atualizada: outra requisição chegou antes.
+    marcada = cast(CursorResult[Any], resultado)
     if marcada.rowcount == 0:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -344,18 +346,20 @@ async def submit_transcript(
     db.add(feedback)
     await db.commit()
 
+    # `registrar` recusa transcrição vazia; o `or ""` só existe porque a coluna é opcional.
+    texto = feedback.transcript or ""
     logger.info(
         "Sessão %s recebeu transcrição do cliente (%s): %d caracteres.",
         presentation.id,
         corpo.engine or "motor não informado",
-        len(feedback.transcript),
+        len(texto),
     )
 
     return TranscriptAcceptedResponse(
         session_id=presentation.id,
         status=presentation.status,
-        char_count=len(feedback.transcript),
-        word_count=len(feedback.transcript.split()),
+        char_count=len(texto),
+        word_count=len(texto.split()),
     )
 
 
