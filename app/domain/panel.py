@@ -15,7 +15,7 @@ import uuid
 from typing import Any, NamedTuple
 
 from app.core.enums import PersonaType
-from app.domain import grounding, slides
+from app.domain import grounding, personas, slides
 from app.domain.ports import LanguageModel
 
 logger = logging.getLogger(__name__)
@@ -28,29 +28,12 @@ MAX_QUOTE_LENGTH = 400
 MAX_SLIDES_CHARS = 20000
 MAX_TRANSCRIPT_CHARS = 30000
 
-# Pedimos com folga porque a validação de aterramento descarta parte das perguntas:
-# pedir 4 e aprovar 2 devolveria uma banca vazia de conteúdo.
-QUESTIONS_REQUESTED = 8
-
-PERSONA_BRIEFS: dict[PersonaType, str] = {
-    PersonaType.STRICT_PROFESSOR: (
-        "um professor examinador rigoroso, que cobra precisão conceitual, "
-        "questiona metodologia e aponta afirmações sem embasamento."
-    ),
-    PersonaType.SUPPORTIVE_ADVISOR: (
-        "um orientador acolhedor, que faz perguntas construtivas para aprofundar "
-        "o raciocínio do apresentador sem intimidá-lo."
-    ),
-    PersonaType.TECHNICAL_EXPERT: (
-        "um especialista técnico da área, que sonda detalhes de implementação, "
-        "limitações e decisões de projeto."
-    ),
-}
-
-SYSTEM_PROMPT = """Você compõe a banca avaliadora de uma apresentação acadêmica \
+# O modelo do modo `full` (slides + fala). O bloco da persona e a quantidade de perguntas
+# vêm de `app.domain.personas`; o resto do prompt é igual para todas as personas.
+FULL_MODE_PROMPT = """Você compõe a banca avaliadora de uma apresentação acadêmica \
 simulada em Realidade Virtual (plataforma PODIUM).
 
-Sua persona nesta sessão: {persona_brief}
+{persona_block}
 
 Você recebe DOIS insumos:
 1. SLIDES — o texto extraído da apresentação, dividido por marcadores [Slide N].
@@ -63,7 +46,7 @@ assunto NÃO é fonte válida nesta tarefa: não preencha lacunas com conhecimen
 não presuma o que os autores quiseram dizer e não mencione teorias, autores, obras, datas \
 ou números que não apareçam no material.
 
-Se o material não sustentar {questions_requested} perguntas, devolva menos. Uma lista curta \
+Se o material não sustentar {question_count} perguntas, devolva menos. Uma lista curta \
 e ancorada vale mais do que uma lista completa e inventada.
 
 ## Natureza dos insumos
@@ -102,7 +85,7 @@ caractere por caractere, sem parafrasear, resumir, traduzir ou corrigir. É a ev
 que a pergunta saiu do material: trechos reescritos são verificados e descartados \
 automaticamente, e a pergunta some junto.
 
-Gere até {questions_requested} perguntas."""
+Gere até {question_count} perguntas."""
 
 USER_PROMPT = """### SLIDES (texto extraído da apresentação)
 {slides_text}
@@ -225,10 +208,7 @@ async def generate_questions(
         )
 
     content = await model.complete(
-        system=SYSTEM_PROMPT.format(
-            persona_brief=PERSONA_BRIEFS[persona],
-            questions_requested=QUESTIONS_REQUESTED,
-        ),
+        system=system_prompt(persona),
         user=USER_PROMPT.format(
             slides_text=slides_context or "(sem texto extraído)",
             transcript=transcript_context or "(sem fala capturada)",
@@ -254,6 +234,14 @@ async def generate_questions(
         questions_approved=len(approved),
         slides_truncated=slides_truncated,
         transcript_truncated=transcript_truncated,
+    )
+
+
+def system_prompt(persona: PersonaType) -> str:
+    """O prompt de sistema da banca: o modelo do modo mais o bloco da persona."""
+    return FULL_MODE_PROMPT.format(
+        persona_block=personas.block(persona),
+        question_count=personas.PROFILES[persona].question_count,
     )
 
 

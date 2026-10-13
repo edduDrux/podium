@@ -6,7 +6,10 @@ exemplo que o modelo copia e o parser que lê a resposta falam dos mesmos campos
 
 import json
 
-from app.domain import panel, slides
+import pytest
+
+from app.core.enums import PersonaType
+from app.domain import panel, personas, slides
 from app.domain.panel import _limit_slides, _limit_transcript
 
 THREE_SLIDES = slides.assemble(
@@ -73,9 +76,21 @@ def test_prompt_json_example_matches_the_parser():
     Se um campo mudar de nome só no parser (ou só no prompt), toda pergunta seria
     descartada em uso real sem nenhum outro teste falhar.
     """
-    prompt = panel.SYSTEM_PROMPT.format(persona_brief="x", questions_requested=8)
+    prompt = panel.system_prompt(PersonaType.STRICT_PROFESSOR)
     example = json.loads(prompt[prompt.index("{") : prompt.rindex("}") + 1])
 
     (question,) = panel.parse_questions(example["questions"])
 
     assert question.slide_number == 3
+
+
+@pytest.mark.parametrize("persona", list(PersonaType))
+def test_every_persona_has_a_profile_in_the_prompt(persona):
+    """Persona nova no enum sem linha na tabela quebraria a sessão só em uso real."""
+    profile = personas.PROFILES[persona]
+    prompt = panel.system_prompt(persona)
+
+    assert profile.role in prompt
+    assert profile.focus in prompt
+    assert profile.tone in prompt
+    assert f"Gere até {profile.question_count} perguntas." in prompt
