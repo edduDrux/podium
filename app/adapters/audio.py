@@ -11,6 +11,7 @@ from pydub import AudioSegment
 from pydub.silence import detect_silence
 
 from app.domain.delivery import MIN_PAUSE_MS, Signal
+from app.domain.errors import MixedChunkFormatsError
 
 logger = logging.getLogger(__name__)
 
@@ -31,15 +32,6 @@ def load(audio_path: Path | str) -> AudioSegment:
 
 def get_duration_seconds(audio_path: Path | str) -> float:
     return len(load(audio_path)) / 1000.0
-
-
-class MixedChunkFormatsError(ValueError):
-    """Chunks da mesma sessão chegaram em formatos diferentes.
-
-    Erro do cliente, não do servidor: emendar formatos distintos até seria possível
-    tecnicamente, mas indica que o VR trocou de codec no meio da gravação — e o áudio
-    resultante não representaria mais uma fala contínua.
-    """
 
 
 def concat_chunks(chunk_paths: list[Path], destination: Path) -> Path:

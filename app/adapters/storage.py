@@ -4,11 +4,12 @@ import shutil
 import time
 import uuid
 from pathlib import Path
+from typing import Protocol
 
 import aiofiles
-from fastapi import UploadFile
 
 from app.core.config import settings
+from app.domain.errors import FileTooLargeError
 
 CHUNK_SIZE = 1024 * 1024  # 1 MB
 
@@ -21,6 +22,17 @@ CHUNK_NAME_RE = re.compile(r"^chunk_(\d{3,})(\.[A-Za-z0-9]+)$")
 SAFE_SUFFIX_RE = re.compile(r"^\.[A-Za-z0-9]{1,8}$")
 
 logger = logging.getLogger(__name__)
+
+
+class Upload(Protocol):
+    """O que o storage lê de um upload: o `UploadFile` do FastAPI cumpre.
+
+    Declarado aqui para que os casos de uso recebam o arquivo sem depender do FastAPI.
+    """
+
+    async def read(self, size: int = -1) -> bytes: ...
+
+    async def seek(self, offset: int) -> None: ...
 
 
 def session_dir(session_id: uuid.UUID) -> Path:
@@ -122,13 +134,13 @@ def discard_audio_chunks(session_id: uuid.UUID) -> int:
 
 
 async def save_upload(
-    upload: UploadFile,
+    upload: Upload,
     destination: Path,
     max_bytes: int | None = None,
 ) -> int:
-    """Grava um UploadFile em disco em streaming. Retorna os bytes escritos.
+    """Grava o upload em disco em streaming. Retorna os bytes escritos.
 
-    Levanta ValueError se `max_bytes` for excedido.
+    Levanta `FileTooLargeError` se `max_bytes` for excedido, apagando o que já gravou.
     """
     destination.parent.mkdir(parents=True, exist_ok=True)
     written = 0
@@ -139,7 +151,9 @@ async def save_upload(
             if max_bytes is not None and written > max_bytes:
                 await out.close()
                 destination.unlink(missing_ok=True)
-                raise ValueError(f"Arquivo excede o limite de {max_bytes / 1024 / 1024:.0f} MB.")
+                raise FileTooLargeError(
+                    f"Arquivo excede o limite de {max_bytes / 1024 / 1024:.0f} MB."
+                )
             await out.write(chunk)
 
     await upload.seek(0)
