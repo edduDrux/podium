@@ -20,9 +20,7 @@ def _pergunta(
     slide: int = 1,
     question: str = "Como os participantes foram selecionados?",
 ) -> GeneratedQuestion:
-    return GeneratedQuestion(
-        question=question, slide_origem=slide, trecho_literal=trecho
-    )
+    return GeneratedQuestion(question=question, slide_origem=slide, trecho_literal=trecho)
 
 
 def test_trecho_honesto_aprova():

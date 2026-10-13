@@ -36,6 +36,11 @@ jobs:
       - name: Lint
         run: ruff check .
 
+      # Formatação checada, não aplicada: o CI aponta o arquivo fora do padrão e quem
+      # corrige é quem fez a mudança, com `ruff format .`.
+      - name: Formatação
+        run: ruff format --check .
+
       # Nenhum teste toca rede, cota de IA ou Postgres: as portas de `domain/ports.py`
       # deixam o pipeline inteiro rodar com dublês. Por isso não há serviço de banco aqui.
       - name: Testes

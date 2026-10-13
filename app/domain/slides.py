@@ -91,11 +91,7 @@ def parse(slides_text: str) -> dict[int, str]:
 
     for posicao, marcador in enumerate(marcadores):
         inicio = marcador.end()
-        fim = (
-            marcadores[posicao + 1].start()
-            if posicao + 1 < len(marcadores)
-            else len(slides_text)
-        )
+        fim = marcadores[posicao + 1].start() if posicao + 1 < len(marcadores) else len(slides_text)
         numero = int(marcador.group(1))
         conteudo = slides_text[inicio:fim].strip()
 

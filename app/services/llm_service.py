@@ -153,9 +153,7 @@ async def _gerar_perguntas(
 
     `presentation_id` serve só para a auditoria (`LLMCall`); omiti-lo desliga o registro.
     """
-    slides_contexto, slides_truncados = _limitar_slides(
-        slides_text or "", MAX_SLIDES_CHARS
-    )
+    slides_contexto, slides_truncados = _limitar_slides(slides_text or "", MAX_SLIDES_CHARS)
     transcript_contexto, transcricao_truncada = _limitar_transcricao(
         transcript or "", MAX_TRANSCRIPT_CHARS
     )
@@ -216,9 +214,7 @@ async def _gerar_perguntas(
     aprovadas = _aplicar_aterramento(candidatas, slides_text)
 
     if aprovadas:
-        logger.info(
-            "Aterramento: %d de %d perguntas aprovadas.", len(aprovadas), len(itens)
-        )
+        logger.info("Aterramento: %d de %d perguntas aprovadas.", len(aprovadas), len(itens))
 
     return ResultadoGeracao(
         questions=aprovadas,

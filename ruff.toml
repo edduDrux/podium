@@ -10,7 +10,9 @@ line-length = 100
 # Migrations são geradas pelo Alembic e revisadas por conteúdo, não por estilo —
 # reformatá-las esconderia a diferença entre o que o autogenerate propôs e o que foi
 # corrigido à mão.
-extend-exclude = ["alembic/versions"]
+# As skills em `.claude/` são cópias de terceiros que precisam ficar idênticas à origem
+# (FONTES.md): o formatador do ruff também reescreve os blocos de código do Markdown.
+extend-exclude = ["alembic/versions", ".claude"]
 
 [lint]
 # E/F: erros de sintaxe e nomes não resolvidos — o que quebra em produção.

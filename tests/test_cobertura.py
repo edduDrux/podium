@@ -72,8 +72,7 @@ def test_adversarial_material_e_fala_descolados():
     assert resultado.percentual_coberto == 0.0
     assert resultado.alerta_descolamento is True
     assert all(
-        avaliacao.classificacao == cobertura.NAO_APRESENTADO
-        for avaliacao in resultado.slides
+        avaliacao.classificacao == cobertura.NAO_APRESENTADO for avaliacao in resultado.slides
     )
 
 
@@ -87,11 +86,7 @@ def test_termo_estrutural_nao_e_cobrado():
     }
     resultado = _avaliar(slides, "falei de outra coisa qualquer")
 
-    ausentes = {
-        termo
-        for avaliacao in resultado.slides
-        for termo in avaliacao.termos_ausentes
-    }
+    ausentes = {termo for avaliacao in resultado.slides for termo in avaliacao.termos_ausentes}
     assert "podium" not in ausentes
     assert "metodologia" in ausentes
 

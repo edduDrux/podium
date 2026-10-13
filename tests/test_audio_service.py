@@ -34,7 +34,9 @@ def exportar(tmp_path):
 
 def test_pausa_no_meio_e_contada(exportar):
     caminho = exportar(_fala() + AudioSegment.silent(PAUSA_MS) + _fala())
-    metricas = audio_service.analyze_form(caminho, "dez palavras ditas aqui neste teste de ritmo bem simples")
+    metricas = audio_service.analyze_form(
+        caminho, "dez palavras ditas aqui neste teste de ritmo bem simples"
+    )
 
     assert metricas.duration_seconds == pytest.approx(5.0, abs=0.05)
     assert metricas.pause_count == 1
@@ -44,9 +46,7 @@ def test_pausa_no_meio_e_contada(exportar):
 
 def test_silencio_nas_bordas_nao_e_pausa(exportar):
     """Silêncio antes de começar e depois de terminar não é pausa de oratória."""
-    caminho = exportar(
-        AudioSegment.silent(PAUSA_MS) + _fala() + AudioSegment.silent(PAUSA_MS)
-    )
+    caminho = exportar(AudioSegment.silent(PAUSA_MS) + _fala() + AudioSegment.silent(PAUSA_MS))
     metricas = audio_service.analyze_form(caminho, "algumas palavras")
 
     assert metricas.pause_count == 0

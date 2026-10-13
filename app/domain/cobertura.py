@@ -92,9 +92,7 @@ def avaliar(
     Os limiares vêm por parâmetro porque o domínio não lê configuração — quem decide os
     números é a raiz de composição, e os testes exercitam o cálculo com valores próprios.
     """
-    termos_por_slide = {
-        numero: _termos(conteudo) for numero, conteudo in sorted(slides.items())
-    }
+    termos_por_slide = {numero: _termos(conteudo) for numero, conteudo in sorted(slides.items())}
     _expurgar_estruturais(termos_por_slide)
 
     falados = _canonicos(normalizar(transcript).split())
@@ -105,14 +103,10 @@ def avaliar(
 
     for numero, termos in termos_por_slide.items():
         if not termos:
-            avaliacoes.append(
-                CoberturaSlide(numero, SEM_TERMOS, None, 0, 0, [])
-            )
+            avaliacoes.append(CoberturaSlide(numero, SEM_TERMOS, None, 0, 0, []))
             continue
 
-        ausentes = sorted(
-            termo for termo, canonico in termos.items() if canonico not in falados
-        )
+        ausentes = sorted(termo for termo, canonico in termos.items() if canonico not in falados)
         presentes = len(termos) - len(ausentes)
         score = presentes / len(termos)
 

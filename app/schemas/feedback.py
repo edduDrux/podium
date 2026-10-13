@@ -14,9 +14,7 @@ class GeneratedQuestion(BaseModel):
     """
 
     question: str
-    rationale: str | None = Field(
-        default=None, description="Por que a banca faria essa pergunta."
-    )
+    rationale: str | None = Field(default=None, description="Por que a banca faria essa pergunta.")
     slide_origem: int = Field(
         description="Número do slide que originou a pergunta (marcador [Slide N])."
     )

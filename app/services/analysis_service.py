@@ -203,9 +203,7 @@ def _transcricao_reaproveitavel(presentation: Presentation) -> str | None:
     return feedback.transcript
 
 
-def _avaliar_cobertura(
-    presentation: Presentation, transcript: str
-) -> SlideCoverageReport:
+def _avaliar_cobertura(presentation: Presentation, transcript: str) -> SlideCoverageReport:
     """Executa o domínio da cobertura e converte para o contrato da API.
 
     A raiz de composição é aqui: o domínio recebe os limiares por parâmetro e não sabe
@@ -227,17 +225,13 @@ def _avaliar_cobertura(
         )
 
     return SlideCoverageReport(
-        slides=[
-            SlideCoverage(**avaliacao._asdict()) for avaliacao in resultado.slides
-        ],
+        slides=[SlideCoverage(**avaliacao._asdict()) for avaliacao in resultado.slides],
         percentual_coberto=resultado.percentual_coberto,
         alerta_descolamento=resultado.alerta_descolamento,
     )
 
 
-def _consolidar_analise(
-    generation: ResultadoGeracao, session_id: uuid.UUID
-) -> str:
+def _consolidar_analise(generation: ResultadoGeracao, session_id: uuid.UUID) -> str:
     """Acrescenta o aviso de banca vazia à análise textual, quando for o caso.
 
     Sessão sem pergunta aprovada NÃO é falha: o pipeline rodou inteiro e a resposta
@@ -287,15 +281,11 @@ def to_response(presentation: Presentation) -> FeedbackResponse:
         slides_truncados=contexto.get("slides_truncados", False),
         transcricao_truncada=contexto.get("transcricao_truncada", False),
         slide_coverage=_cobertura_persistida(cobertura_gravada, presentation.id),
-        transcript_source=transcript_service.rotulo(
-            transcript_service.origem_registrada(feedback)
-        ),
+        transcript_source=transcript_service.rotulo(transcript_service.origem_registrada(feedback)),
     )
 
 
-def _cobertura_persistida(
-    dados: Any, session_id: uuid.UUID
-) -> SlideCoverageReport | None:
+def _cobertura_persistida(dados: Any, session_id: uuid.UUID) -> SlideCoverageReport | None:
     """Reconstrói o relatório de cobertura gravado, tolerando o que não couber no contrato.
 
     `None` para feedback anterior à cobertura — ausência de medição não é medição
@@ -305,10 +295,9 @@ def _cobertura_persistida(
         return None
     try:
         return SlideCoverageReport(**dados)
-    except (ValidationError, TypeError):
+    except ValidationError, TypeError:
         logger.warning(
-            "Cobertura persistida da sessão %s é incompatível com o contrato atual "
-            "e foi omitida.",
+            "Cobertura persistida da sessão %s é incompatível com o contrato atual e foi omitida.",
             session_id,
         )
         return None
@@ -328,7 +317,7 @@ def _questions_persistidas(
     for item in itens or []:
         try:
             perguntas.append(GeneratedQuestion(**item))
-        except (ValidationError, TypeError):
+        except ValidationError, TypeError:
             logger.warning(
                 "Pergunta persistida da sessão %s é incompatível com o contrato atual "
                 "(provavelmente anterior ao aterramento) e foi omitida.",

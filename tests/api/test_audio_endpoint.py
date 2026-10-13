@@ -38,9 +38,7 @@ async def test_audio_during_analysis_is_409(client, presentation, db_session):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "status", [PresentationStatus.COMPLETED, PresentationStatus.FAILED]
-)
+@pytest.mark.parametrize("status", [PresentationStatus.COMPLETED, PresentationStatus.FAILED])
 async def test_audio_after_analysis_is_accepted_for_reanalysis(
     client, presentation, db_session, status
 ):

@@ -30,10 +30,7 @@ def _shape_text(shape) -> list[str]:
         return [block for inner in shape.shapes for block in _shape_text(inner)]
 
     if getattr(shape, "has_table", False):
-        return [
-            " | ".join(cell.text.strip() for cell in row.cells)
-            for row in shape.table.rows
-        ]
+        return [" | ".join(cell.text.strip() for cell in row.cells) for row in shape.table.rows]
 
     if getattr(shape, "has_text_frame", False):
         return [shape.text_frame.text]

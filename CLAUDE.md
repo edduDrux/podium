@@ -73,6 +73,7 @@ docker compose exec api alembic upgrade head
 docker compose exec api pip install -r requirements-dev.txt   # 1x por container
 docker compose exec api python -m pytest tests/   # 81 testes, sem rede/cota/banco
 docker compose exec api ruff check .
+docker compose exec api ruff format --check .        # "ruff format ." corrige
 ```
 
 - O Postgres local do dev ocupa a 5432 → o container publica em **5433:5432**. A API fala

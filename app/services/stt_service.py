@@ -45,12 +45,12 @@ TRANSCRIPTION_PROMPT = (
 EMOJI_RE = re.compile(
     "["
     "\\U0001F000-\\U0001FAFF"  # pictogramas: emoticons, comida, objetos, bandeiras...
-    "\\u2600-\\u27BF"          # símbolos diversos e dingbats
-    "\\u2B00-\\u2BFF"          # setas e símbolos (inclui a estrela U+2B50)
-    "\\u2300-\\u23FF"          # técnicos com cara de emoji (ampulheta, relógio)
-    "\\u200D"                  # zero-width joiner (compõe emojis; invisível sozinho)
-    "\\u20E3"                  # keycap combinante
-    "\\uFE0E\\uFE0F"           # seletores de variação
+    "\\u2600-\\u27BF"  # símbolos diversos e dingbats
+    "\\u2B00-\\u2BFF"  # setas e símbolos (inclui a estrela U+2B50)
+    "\\u2300-\\u23FF"  # técnicos com cara de emoji (ampulheta, relógio)
+    "\\u200D"  # zero-width joiner (compõe emojis; invisível sozinho)
+    "\\u20E3"  # keycap combinante
+    "\\uFE0E\\uFE0F"  # seletores de variação
     "]"
 )
 _ESPACOS_RE = re.compile(r"[ \t]{2,}")
@@ -88,9 +88,7 @@ class GeminiTranscritor:
         language: str = "pt",
         presentation_id: uuid.UUID | None = None,
     ) -> str:
-        return await _transcrever(
-            self._auditoria, audio_path, language, presentation_id
-        )
+        return await _transcrever(self._auditoria, audio_path, language, presentation_id)
 
 
 async def _transcrever(
@@ -116,9 +114,7 @@ async def _transcrever(
             f"{settings.MAX_INLINE_AUDIO_MB} MB para envio inline ao Gemini."
         )
 
-    prompt = TRANSCRIPTION_PROMPT.format(
-        language=LANGUAGE_NAMES.get(language, language)
-    )
+    prompt = TRANSCRIPTION_PROMPT.format(language=LANGUAGE_NAMES.get(language, language))
     payload = {
         "contents": [
             {
@@ -136,9 +132,7 @@ async def _transcrever(
         "generationConfig": {"temperature": STT_TEMPERATURE},
     }
 
-    url = (
-        f"{settings.GEMINI_API_BASE}/models/{settings.STT_MODEL}:generateContent"
-    )
+    url = f"{settings.GEMINI_API_BASE}/models/{settings.STT_MODEL}:generateContent"
 
     async with auditoria.medir(
         presentation_id=presentation_id,

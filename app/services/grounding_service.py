@@ -38,10 +38,7 @@ def _numeros(texto: str) -> set[str]:
     é uma colisão rara ("3,14" e "314" empatam), documentada e aceita: falso positivo
     aqui exige coincidência de dígitos, o falso negativo aconteceria a cada decimal.
     """
-    return {
-        numero.replace(".", "").replace(",", "")
-        for numero in NUMERO_RE.findall(texto or "")
-    }
+    return {numero.replace(".", "").replace(",", "") for numero in NUMERO_RE.findall(texto or "")}
 
 
 def validar(
@@ -61,9 +58,7 @@ def validar(
 
     conteudo_normalizado = _normalizar(conteudo)
 
-    trecho_score = fuzz.partial_ratio(
-        _normalizar(pergunta.trecho_literal), conteudo_normalizado
-    )
+    trecho_score = fuzz.partial_ratio(_normalizar(pergunta.trecho_literal), conteudo_normalizado)
     if trecho_score < min_score:
         return False, "TRECHO_NAO_LITERAL"
 
@@ -75,9 +70,7 @@ def validar(
     if _numeros(pergunta.trecho_literal) - _numeros(conteudo):
         return False, "NUMERO_NAO_ENCONTRADO"
 
-    pergunta_score = fuzz.partial_ratio(
-        _normalizar(pergunta.question), conteudo_normalizado
-    )
+    pergunta_score = fuzz.partial_ratio(_normalizar(pergunta.question), conteudo_normalizado)
     if pergunta_score >= MAX_QUESTION_SIMILARITY:
         return False, "PERGUNTA_TRIVIAL"
 

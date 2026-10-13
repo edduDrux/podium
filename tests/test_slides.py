@@ -16,9 +16,7 @@ def test_bloco_e_montar_produzem_o_formato_do_contrato():
 
 def test_parse_desfaz_o_que_montar_fez():
     original = {1: "Introdução ao tema", 2: "Metodologia aplicada"}
-    texto = slides.montar(
-        [slides.bloco(numero, conteudo) for numero, conteudo in original.items()]
-    )
+    texto = slides.montar([slides.bloco(numero, conteudo) for numero, conteudo in original.items()])
     assert slides.parse(texto) == original
 
 

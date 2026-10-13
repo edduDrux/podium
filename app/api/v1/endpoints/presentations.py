@@ -85,9 +85,7 @@ async def init_presentation(
     )
 
     try:
-        await storage_service.save_upload(
-            file, file_path, max_bytes=settings.max_upload_size_bytes
-        )
+        await storage_service.save_upload(file, file_path, max_bytes=settings.max_upload_size_bytes)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=str(exc)
@@ -256,20 +254,14 @@ async def analyze_presentation(
         # bloquearia o event loop — junto com ele, o polling de todas as outras sessões.
         destino = storage_service.audio_path(presentation.id, chunks[0].suffix)
         try:
-            audio_path = str(
-                await run_in_threadpool(audio_service.concat_chunks, chunks, destino)
-            )
+            audio_path = str(await run_in_threadpool(audio_service.concat_chunks, chunks, destino))
         except audio_service.MixedChunkFormatsError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-            ) from exc
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
     # A duração só é confiável sobre o áudio inteiro: um chunk sozinho não diz nada
     # sobre o tamanho da apresentação.
     try:
-        duration = await run_in_threadpool(
-            audio_service.get_duration_seconds, audio_path
-        )
+        duration = await run_in_threadpool(audio_service.get_duration_seconds, audio_path)
     except Exception as exc:
         # Sem áudio legível não há nem métrica de forma nem transcrição — falhar aqui
         # avisa o Cliente VR na hora, em vez de deixar o pipeline morrer em segundo plano.
@@ -308,9 +300,7 @@ async def analyze_presentation(
             detail="Esta sessão já está sendo analisada.",
         )
 
-    background_tasks.add_task(
-        analysis_service.run_pipeline_in_background, presentation.id
-    )
+    background_tasks.add_task(analysis_service.run_pipeline_in_background, presentation.id)
 
     return AnalysisAcceptedResponse(
         session_id=presentation.id,
@@ -347,9 +337,7 @@ async def submit_transcript(
         )
 
     try:
-        feedback = transcript_service.registrar(
-            presentation, corpo.transcript, corpo.engine
-        )
+        feedback = transcript_service.registrar(presentation, corpo.transcript, corpo.engine)
     except transcript_service.TranscricaoVaziaError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
@@ -382,9 +370,7 @@ async def get_slides_info(presentation: CurrentPresentation) -> SlidesInfoRespon
     """Metadados para a tela da sala: o Cliente VR decide daqui quantas imagens pedir."""
     total = 0
     if slide_render_service.renderizavel(presentation):
-        total = await run_in_threadpool(
-            slide_render_service.contar_paginas, presentation.file_path
-        )
+        total = await run_in_threadpool(slide_render_service.contar_paginas, presentation.file_path)
 
     return SlidesInfoResponse(
         session_id=presentation.id,

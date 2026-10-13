@@ -44,8 +44,7 @@ def registrar(presentation: Presentation, texto: str, motor: str | None) -> Feed
     limpo = limpar_transcricao(texto or "")
     if not limpo:
         raise TranscricaoVaziaError(
-            "A transcrição enviada não tem nenhuma palavra; o áudio será transcrito no "
-            "servidor."
+            "A transcrição enviada não tem nenhuma palavra; o áudio será transcrito no servidor."
         )
 
     feedback = presentation.feedback or Feedback(presentation_id=presentation.id)

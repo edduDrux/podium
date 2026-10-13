@@ -16,9 +16,7 @@ class Feedback(Base, TimestampMixin):
 
     __tablename__ = "feedbacks"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     presentation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("presentations.id", ondelete="CASCADE"),
@@ -28,9 +26,7 @@ class Feedback(Base, TimestampMixin):
 
     # Avaliação de CONTEÚDO
     transcript: Mapped[str | None] = mapped_column(Text)
-    questions: Mapped[list[dict[str, Any]]] = mapped_column(
-        JSONB, default=list, nullable=False
-    )
+    questions: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, nullable=False)
     content_analysis: Mapped[str | None] = mapped_column(Text)
 
     # Avaliação de FORMA (ritmo, pausas, duração — derivadas do áudio)

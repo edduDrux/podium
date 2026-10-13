@@ -139,9 +139,7 @@ async def save_upload(
             if max_bytes is not None and written > max_bytes:
                 await out.close()
                 destination.unlink(missing_ok=True)
-                raise ValueError(
-                    f"Arquivo excede o limite de {max_bytes / 1024 / 1024:.0f} MB."
-                )
+                raise ValueError(f"Arquivo excede o limite de {max_bytes / 1024 / 1024:.0f} MB.")
             await out.write(chunk)
 
     await upload.seek(0)

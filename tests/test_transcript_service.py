@@ -123,9 +123,7 @@ async def test_pipeline_usa_a_transcricao_do_cliente_e_nao_chama_o_stt(presentat
     transcript_service.registrar(presentation, "falei da metodologia experimental", "whisper")
     espiao = TranscritorEspiao()
 
-    resposta = await analysis_service.run_pipeline(
-        BancoFalso(), presentation, espiao, BancaFalsa()
-    )
+    resposta = await analysis_service.run_pipeline(BancoFalso(), presentation, espiao, BancaFalsa())
 
     assert espiao.chamadas == 0
     assert resposta.transcript == "falei da metodologia experimental"
@@ -140,9 +138,7 @@ async def test_pipeline_usa_a_transcricao_do_cliente_e_nao_chama_o_stt(presentat
 async def test_pipeline_registra_o_servidor_como_origem_quando_o_stt_roda(presentation):
     espiao = TranscritorEspiao()
 
-    resposta = await analysis_service.run_pipeline(
-        BancoFalso(), presentation, espiao, BancaFalsa()
-    )
+    resposta = await analysis_service.run_pipeline(BancoFalso(), presentation, espiao, BancaFalsa())
 
     assert espiao.chamadas == 1
     assert resposta.transcript_source.startswith("servidor")

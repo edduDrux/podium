@@ -61,9 +61,7 @@ def concat_chunks(chunk_paths: list[Path], destination: Path) -> Path:
         combinado += AudioSegment.from_file(str(caminho))
 
     suffix = formatos[0]
-    combinado.export(
-        destination, format=EXPORT_FORMAT_BY_SUFFIX.get(suffix, suffix.lstrip("."))
-    )
+    combinado.export(destination, format=EXPORT_FORMAT_BY_SUFFIX.get(suffix, suffix.lstrip(".")))
     logger.info(
         "Áudio remontado a partir de %d chunk(s): %s (%.1f s).",
         len(chunk_paths),
@@ -126,11 +124,7 @@ def analyze_form(audio_path: Path | str, transcript: str) -> SpeechMetrics:
         audio, min_silence_len=MIN_PAUSE_MS, silence_thresh=_silence_threshold(audio)
     )
     # Silêncio no início/fim não conta como pausa de fala.
-    pauses_ms = [
-        end - start
-        for start, end in silences
-        if start > 0 and end < len(audio)
-    ]
+    pauses_ms = [end - start for start, end in silences if start > 0 and end < len(audio)]
 
     total_pause_seconds = sum(pauses_ms) / 1000.0
     # As pausas das bordas ficaram de fora, então a soma não deveria superar a duração;

@@ -41,8 +41,8 @@ class LLMCallStage(StrEnum):
 class PresentationStatus(StrEnum):
     """Ciclo de vida de uma sessão de apresentação."""
 
-    CREATED = "created"           # sessão criada, PDF recebido e texto extraído
+    CREATED = "created"  # sessão criada, PDF recebido e texto extraído
     AUDIO_RECEIVED = "audio_received"
-    PROCESSING = "processing"     # STT + LLM em andamento
-    COMPLETED = "completed"       # feedback duplo disponível
+    PROCESSING = "processing"  # STT + LLM em andamento
+    COMPLETED = "completed"  # feedback duplo disponível
     FAILED = "failed"
