@@ -442,6 +442,30 @@ async def get_presentation(presentation: CurrentPresentation) -> PresentationRes
     summary="Recupera o Feedback Duplo já processado",
 )
 async def get_feedback(presentation: CurrentPresentation) -> FeedbackResponse:
+    """Devolve o Feedback Duplo de uma análise concluída.
+
+    Decide pelo status, e não pela existência da linha em `feedbacks`: ela pode existir
+    antes da análise (transcrição enviada pelo headset) ou depois de um áudio novo (com
+    as perguntas da fala anterior). Devolvê-la com 200 seria indistinguível de uma análise
+    que terminou sem perguntas aprovadas. O 409 diz ao Cliente VR que a sessão existe,
+    mas ainda não chegou ao fim.
+    """
+    if presentation.status == PresentationStatus.FAILED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "A análise desta sessão falhou. O motivo está em `error_message`, no "
+                "GET /presentations/{id}; chame /analyze para tentar de novo."
+            ),
+        )
+    if presentation.status != PresentationStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"O feedback ainda não está disponível (status: {presentation.status}). "
+                "Chame /analyze e acompanhe pelo GET /presentations/{id} até 'completed'."
+            ),
+        )
     if presentation.feedback is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
