@@ -5,7 +5,7 @@ participantes" num trecho copiado dá `partial_ratio` 96.2 e passava em qualquer
 """
 
 from app.domain import grounding
-from app.schemas.feedback import QuestionResponse
+from app.domain.panel import Question
 
 MIN_SCORE = 90
 
@@ -19,8 +19,8 @@ def _question(
     quote: str,
     slide: int = 1,
     question: str = "Como os participantes foram selecionados?",
-) -> QuestionResponse:
-    return QuestionResponse(question=question, slide_number=slide, quote=quote)
+) -> Question:
+    return Question(text=question, rationale=None, slide_number=slide, quote=quote)
 
 
 def test_honest_quote_is_approved():

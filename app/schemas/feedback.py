@@ -2,6 +2,8 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
+from app.domain.panel import Question
+
 
 class QuestionResponse(BaseModel):
     """Pergunta inédita formulada pela banca com base no conteúdo apresentado.
@@ -23,6 +25,16 @@ class QuestionResponse(BaseModel):
         max_length=400,
         description="Trecho copiado literalmente do slide que sustenta a pergunta.",
     )
+
+    @classmethod
+    def from_question(cls, question: Question) -> "QuestionResponse":
+        """Converte a pergunta do domínio no contrato da API (e no formato gravado)."""
+        return cls(
+            question=question.text,
+            rationale=question.rationale,
+            slide_number=question.slide_number,
+            quote=question.quote,
+        )
 
 
 class SlideCoverageResponse(BaseModel):

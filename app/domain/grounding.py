@@ -17,8 +17,8 @@ import re
 
 from rapidfuzz import fuzz
 
+from app.domain.panel import Question
 from app.domain.text import normalize as _normalize
-from app.schemas.feedback import QuestionResponse
 
 # Números com separadores internos ("1.000", "3,14") capturados inteiros, antes da
 # normalização — `normalize` transforma pontuação em espaço e partiria o decimal.
@@ -42,7 +42,7 @@ def _numbers(text: str) -> set[str]:
 
 
 def validate(
-    question: QuestionResponse,
+    question: Question,
     slides: dict[int, str],
     min_score: int,
 ) -> tuple[bool, str | None]:
@@ -70,7 +70,7 @@ def validate(
     if _numbers(question.quote) - _numbers(content):
         return False, "NUMBER_NOT_FOUND"
 
-    question_score = fuzz.partial_ratio(_normalize(question.question), normalized_content)
+    question_score = fuzz.partial_ratio(_normalize(question.text), normalized_content)
     if question_score >= MAX_QUESTION_SIMILARITY:
         return False, "TRIVIAL_QUESTION"
 

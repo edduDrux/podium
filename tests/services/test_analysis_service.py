@@ -18,7 +18,7 @@ import pytest
 from app.adapters import audio
 from app.core.enums import PersonaType, PresentationStatus
 from app.domain import slides
-from app.domain.panel import GenerationResult
+from app.domain.panel import GenerationResult, Question
 from app.domain.ports import Panel, Transcriber
 from app.models.feedback import Feedback
 from app.models.presentation import Presentation
@@ -32,8 +32,9 @@ SLIDES_TEXT = slides.assemble(
     ]
 )
 
-QUESTION = QuestionResponse(
-    question="Por que a metodologia experimental foi escolhida?",
+QUESTION = Question(
+    text="Por que a metodologia experimental foi escolhida?",
+    rationale=None,
     slide_number=1,
     quote="A metodologia experimental adotada nesta pesquisa",
 )
@@ -131,7 +132,7 @@ async def test_happy_path_completes_with_full_feedback(presentation):
     )
 
     assert presentation.status == PresentationStatus.COMPLETED
-    assert response.questions == [QUESTION]
+    assert response.questions == [QuestionResponse.from_question(QUESTION)]
     assert response.transcript == "falei sobre a metodologia experimental"
     assert response.questions_generated == 2
     assert response.grounding_rate == 0.5

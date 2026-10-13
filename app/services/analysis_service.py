@@ -151,7 +151,8 @@ async def run_pipeline(
 
         feedback = presentation.feedback or Feedback(presentation_id=presentation.id)
         feedback.transcript = transcript
-        feedback.questions = [q.model_dump() for q in generation.questions]
+        questions = [QuestionResponse.from_question(q) for q in generation.questions]
+        feedback.questions = [q.model_dump() for q in questions]
         feedback.content_analysis = content_analysis
         feedback.metrics = {
             **delivery_metrics.model_dump(),
@@ -174,7 +175,7 @@ async def run_pipeline(
         return FeedbackResponse(
             session_id=presentation.id,
             transcript=transcript,
-            questions=generation.questions,
+            questions=questions,
             content_analysis=content_analysis,
             delivery_metrics=delivery_metrics,
             questions_generated=generation.questions_generated,

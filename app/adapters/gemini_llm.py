@@ -4,14 +4,12 @@ import uuid
 
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
-from pydantic import ValidationError
 
 from app.core.config import settings
 from app.core.enums import LLMCallStage, PersonaType
-from app.domain import grounding, slides
-from app.domain.panel import GenerationResult
+from app.domain import grounding, panel, slides
+from app.domain.panel import GenerationResult, Question
 from app.domain.ports import Audit
-from app.schemas.feedback import QuestionResponse
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +208,7 @@ async def _generate_questions(
     payload = _parse_payload(_extract_content(response))
     items = payload.get("questions") or []
 
-    candidates = _parse_questions(items)
+    candidates = panel.parse_questions(items)
     approved = _apply_grounding(candidates, slides_text)
 
     if approved:
@@ -333,28 +331,10 @@ def _parse_payload(content: str | None) -> dict:
     return payload
 
 
-def _parse_questions(items: list) -> list[QuestionResponse]:
-    """Converte os itens do JSON em perguntas, descartando os malformados.
-
-    Um item fora do contrato (sem `quote`, com `slide_number` textual) não pode
-    derrubar as perguntas válidas que vieram na mesma resposta — o custo de uma chamada
-    inteira ao LLM é alto demais para se perder por causa de um item.
-    """
-    questions: list[QuestionResponse] = []
-
-    for item in items:
-        try:
-            questions.append(QuestionResponse(**item))
-        except (ValidationError, TypeError) as exc:
-            logger.warning("Pergunta descartada por formato inválido (%s): %r", exc, item)
-
-    return questions
-
-
-def _apply_grounding(questions: list[QuestionResponse], slides_text: str) -> list[QuestionResponse]:
+def _apply_grounding(questions: list[Question], slides_text: str) -> list[Question]:
     """Mantém apenas as perguntas comprovadamente ancoradas em um trecho dos slides."""
     slides_by_number = slides.parse(slides_text or "")
-    approved: list[QuestionResponse] = []
+    approved: list[Question] = []
 
     for question in questions:
         is_approved, reason = grounding.validate(
@@ -367,7 +347,7 @@ def _apply_grounding(questions: list[QuestionResponse], slides_text: str) -> lis
                 "Pergunta rejeitada no aterramento (%s | slide %s): %s",
                 reason,
                 question.slide_number,
-                question.question,
+                question.text,
             )
 
     return approved

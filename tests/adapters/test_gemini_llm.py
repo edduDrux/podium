@@ -8,8 +8,7 @@ import json
 
 from app.adapters import gemini_llm
 from app.adapters.gemini_llm import _limit_slides, _limit_transcript
-from app.domain import slides
-from app.schemas.feedback import QuestionResponse
+from app.domain import panel, slides
 
 THREE_SLIDES = slides.assemble(
     [
@@ -79,6 +78,6 @@ def test_prompt_json_example_matches_the_parser():
     prompt = gemini_llm.SYSTEM_PROMPT.format(persona_brief="x", questions_requested=8)
     example = json.loads(prompt[prompt.index("{") : prompt.rindex("}") + 1])
 
-    question = QuestionResponse(**example["questions"][0])
+    (question,) = panel.parse_questions(example["questions"])
 
     assert question.slide_number == 3
