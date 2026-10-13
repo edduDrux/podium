@@ -93,14 +93,16 @@ async def init_presentation(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=str(exc)
         ) from exc
 
-    if not slides_service.is_valid(file_path, file_type):
+    # PyMuPDF e python-pptx são síncronos: no event loop, um deck grande congelaria as
+    # outras requisições durante a leitura.
+    if not await run_in_threadpool(slides_service.is_valid, file_path, file_type):
         file_path.unlink(missing_ok=True)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Não foi possível ler o arquivo {file_type.upper()} enviado.",
         )
 
-    slides_text = slides_service.extract_text(file_path, file_type)
+    slides_text = await run_in_threadpool(slides_service.extract_text, file_path, file_type)
 
     # Recusar aqui, e não deixar o aterramento reprovar tudo lá na frente: sem texto o
     # usuário receberia uma sessão concluída e vazia, sem pista de que a causa foi o
@@ -191,7 +193,8 @@ async def upload_audio(
         storage_service.discard_audio_chunks(presentation.id)
 
         try:
-            duration = audio_service.get_duration_seconds(destination)
+            # Ler a duração decodifica o áudio inteiro: trabalho de CPU, fora do loop.
+            duration = await run_in_threadpool(audio_service.get_duration_seconds, destination)
         except Exception:
             logger.warning(
                 "Áudio da sessão %s não pôde ser decodificado no upload; a duração "

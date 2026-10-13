@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from typing import Any
@@ -98,7 +99,13 @@ async def run_pipeline(
         # /audio a apaga ao receber áudio novo, então "existe" significa "é deste áudio".
         transcript = _transcricao_reaproveitavel(presentation)
         if transcript is None:
-            stt_ready_path = audio_service.normalize_for_stt(presentation.audio_path)
+            # Decodificar e reexportar o áudio é trabalho de CPU do pydub/FFmpeg: no event
+            # loop, congelaria todas as requisições enquanto durasse. `asyncio.to_thread`,
+            # e não o `run_in_threadpool` dos endpoints, para que o caso de uso não
+            # dependa do FastAPI.
+            stt_ready_path = await asyncio.to_thread(
+                audio_service.normalize_for_stt, presentation.audio_path
+            )
             transcript = await transcritor.transcrever(
                 stt_ready_path, presentation_id=presentation.id
             )
@@ -119,7 +126,9 @@ async def run_pipeline(
             )
 
         # 2. FORMA: ritmo e pausas
-        metrics = audio_service.analyze_form(presentation.audio_path, transcript)
+        metrics = await asyncio.to_thread(
+            audio_service.analyze_form, presentation.audio_path, transcript
+        )
 
         # 2.5 COBERTURA: material × transcrição, ANTES e independente do LLM — se a
         # banca degradar para zero perguntas, a resposta a "o que ficou por apresentar?"

@@ -9,6 +9,8 @@ O banco é um dublê porque `run_pipeline` só usa `add` e `commit` da sessão; 
 Postgres para observar duas chamadas seria pagar caro por menos isolamento.
 """
 
+import asyncio
+import time
 import uuid
 
 import pytest
@@ -266,3 +268,38 @@ async def test_sessao_sem_feedback_anterior_chama_o_stt(presentation):
     )
 
     assert espiao.chamadas == 1
+
+
+@pytest.mark.asyncio
+async def test_pipeline_does_not_block_the_event_loop(presentation, monkeypatch):
+    """Decodificar o áudio roda fora do event loop.
+
+    Na VM de 1 OCPU, o pydub preso no loop congelaria todas as requisições enquanto
+    durasse — inclusive o polling do Cliente VR. Aqui a decodificação é simulada por
+    300 ms de `time.sleep`, e uma tarefa paralela conta quantas vezes o loop a deixou
+    rodar: livre, ela anda ~30 vezes; bloqueado, nenhuma.
+    """
+
+    def slow_analyze_form(audio_path, transcript):
+        time.sleep(0.3)
+        return SpeechMetrics()
+
+    monkeypatch.setattr(audio_service, "analyze_form", slow_analyze_form)
+    ticks = 0
+
+    async def ticker():
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    task = asyncio.create_task(ticker())
+    await analysis_service.run_pipeline(
+        BancoFalso(),
+        presentation,
+        TranscritorFalso(),
+        BancaFalsa(ResultadoGeracao([], "", 0, 0)),
+    )
+    task.cancel()
+
+    assert ticks >= 10

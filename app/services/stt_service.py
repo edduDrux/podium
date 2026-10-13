@@ -5,6 +5,7 @@ import re
 import uuid
 from pathlib import Path
 
+import aiofiles
 import httpx
 
 from app.core.config import settings
@@ -104,7 +105,9 @@ async def _transcrever(
     e mantém a transcrição utilizável fora de uma sessão.
     """
     path = Path(audio_path)
-    audio_bytes = path.read_bytes()
+    # Até `MAX_INLINE_AUDIO_MB` lidos do disco: `aiofiles`, para não prender o loop.
+    async with aiofiles.open(path, "rb") as audio_file:
+        audio_bytes = await audio_file.read()
 
     size_mb = len(audio_bytes) / 1024 / 1024
     if size_mb > settings.MAX_INLINE_AUDIO_MB:

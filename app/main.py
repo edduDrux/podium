@@ -27,7 +27,9 @@ async def _storage_janitor() -> None:
     interval = settings.CLEANUP_INTERVAL_MINUTES * 60
     while True:
         try:
-            removed = storage_service.purge_expired()
+            # Varrer e apagar pastas é I/O de disco síncrono: numa thread, para não
+            # congelar as requisições a cada limpeza.
+            removed = await asyncio.to_thread(storage_service.purge_expired)
             if removed:
                 logger.info("Limpeza: %d pasta(s) de sessão removida(s).", removed)
         except Exception:
