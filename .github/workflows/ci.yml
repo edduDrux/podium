@@ -41,6 +41,11 @@ jobs:
       - name: Formatação
         run: ruff format --check .
 
+      # Tipos: pega adaptador divergindo da porta e `None` onde o código supõe valor —
+      # o `runtime_checkable` das portas só confere a presença dos métodos, não as assinaturas.
+      - name: Tipos
+        run: mypy
+
       # Nenhum teste toca rede, cota de IA ou Postgres: as portas de `domain/ports.py`
       # deixam o pipeline inteiro rodar com dublês. Por isso não há serviço de banco aqui.
       - name: Testes

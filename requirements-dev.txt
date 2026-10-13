@@ -6,3 +6,9 @@ pytest-asyncio==1.4.0
 # Linter. Configuração em `ruff.toml`, explícita para o CI não mudar de comportamento
 # sozinho quando a versão avançar.
 ruff==0.16.2
+# Verificador de tipos. Configuração em `mypy.ini`. 2.3.1 e não a 2.4.0: a mais recente
+# tinha 11 dias em 2026-10-12, e a 2.3.1 já cobre o Python 3.14 (wheels cp314 manylinux
+# x86_64 e aarch64 conferidos no PyPI).
+mypy==2.3.1
+# Tipos do `aiofiles`, que não os publica no próprio pacote. Puro Python.
+types-aiofiles==25.1.0.20260518
