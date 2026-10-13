@@ -11,8 +11,8 @@
     automatica, que so apaga diretorios com nome de UUID):
 
       tcc_slides.pdf         apresentacao de 5 slides (via PyMuPDF, dentro do container)
-      fala_apresentacao.wav  a fala LEGITIMA sobre esses slides
-      fala_adversarial.wav   fala sobre assunto completamente diferente (uma receita)
+      presentation_speech.wav  a fala LEGITIMA sobre esses slides
+      adversarial_speech.wav   fala sobre assunto completamente diferente (uma receita)
 
     A fala legitima omite de proposito o slide 5 (limitacoes) e conclui causalidade sem
     respaldo — sao as lacunas que a banca deve cobrar. A fala adversarial e o insumo do
@@ -21,44 +21,44 @@
     A voz e escolhida pelo IDIOMA (pt-BR), nao pelo nome: o Windows PowerShell 5.1 e o
     pwsh 7 enxergam conjuntos DIFERENTES de vozes instaladas na mesma maquina — o 5.1 so
     lista as "Desktop", o 7 lista tambem as OneCore. Fixar um nome quebraria em um dos
-    dois, e quebraria de novo em outra maquina. Use -Voz para preferir uma especifica.
+    dois, e quebraria de novo em outra maquina. Use -Voice para preferir uma especifica.
 
 .EXAMPLE
-    .\scripts\gerar_fixtures_teste.ps1
+    .\scripts\generate_test_fixtures.ps1
 
 .EXAMPLE
-    .\scripts\gerar_fixtures_teste.ps1 -Voz 'Microsoft Daniel'
+    .\scripts\generate_test_fixtures.ps1 -Voice 'Microsoft Daniel'
 #>
 
 [CmdletBinding()]
 param(
-    [string]$Voz = '',
-    [string]$Idioma = 'pt-BR',
-    [string]$Destino = 'storage/_fixtures'
+    [string]$Voice = '',
+    [string]$Language = 'pt-BR',
+    [string]$Destination = 'storage/_fixtures'
 )
 
 $ErrorActionPreference = 'Stop'
 
-$raiz = Split-Path -Parent $PSScriptRoot
+$root = Split-Path -Parent $PSScriptRoot
 # O compose e localizado por caminho em vez de por `Set-Location`: mudar o diretorio
 # corrente vazava para o shell de quem chamou o script, e nao voltava se ele abortasse no
 # meio. O project directory do Compose passa a ser o do proprio arquivo, entao o container
 # alvo continua sendo o mesmo.
-$composeFile = Join-Path $raiz 'docker-compose.yml'
+$composeFile = Join-Path $root 'docker-compose.yml'
 
 # --- 1. PDF, via PyMuPDF no container (o §4 diz que tudo roda no Docker) --------------
 # O caminho do script e relativo ao WORKDIR do container (/code), nao ao host.
 Write-Host 'Gerando o PDF da apresentacao...' -ForegroundColor Cyan
-docker compose -f $composeFile exec -T api python scripts/gerar_slides_fixture.py
+docker compose -f $composeFile exec -T api python scripts/generate_slides_fixture.py
 if ($LASTEXITCODE -ne 0) {
     throw 'Falha ao gerar o PDF. O container `api` esta de pe? (docker compose up -d)'
 }
 
 # --- 2. Audios, via SAPI ---------------------------------------------------------------
-$pasta = Join-Path $raiz $Destino
-if (-not (Test-Path $pasta)) { New-Item -ItemType Directory -Path $pasta | Out-Null }
+$folder = Join-Path $root $Destination
+if (-not (Test-Path $folder)) { New-Item -ItemType Directory -Path $folder | Out-Null }
 
-$apresentacao = @'
+$presentationSpeech = @'
 Bom dia a todos. Meu nome é Eduardo Sartori e vou apresentar meu trabalho de conclusão de curso, que trata da avaliação de usabilidade de um simulador de apresentações acadêmicas em realidade virtual.
 O problema que motivou a pesquisa é que falar em público é a principal dificuldade relatada por estudantes de graduação na hora de defender o trabalho final. Muita gente domina o conteúdo, mas trava na frente da banca.
 O objetivo foi avaliar se um simulador em realidade virtual reduz a ansiedade percebida antes da banca.
@@ -78,44 +78,44 @@ Se quiser engrossar o caldo, pega uma concha de feijão, amassa e devolve para a
 Add-Type -AssemblyName System.Speech
 
 # Descoberta da voz antes de sintetizar: falhar aqui e mais barato que descobrir no meio.
-$instaladas = (New-Object System.Speech.Synthesis.SpeechSynthesizer).GetInstalledVoices() |
+$installed = (New-Object System.Speech.Synthesis.SpeechSynthesizer).GetInstalledVoices() |
     ForEach-Object { $_.VoiceInfo }
 
-if ($Voz -and ($instaladas.Name -contains $Voz)) {
-    $vozEscolhida = $Voz
+if ($Voice -and ($installed.Name -contains $Voice)) {
+    $chosenVoice = $Voice
 } else {
-    if ($Voz) {
-        Write-Warning "Voz '$Voz' nao esta instalada neste runtime; escolhendo por idioma."
+    if ($Voice) {
+        Write-Warning "Voz '$Voice' nao esta instalada neste runtime; escolhendo por idioma."
     }
-    $vozEscolhida = ($instaladas | Where-Object { $_.Culture -eq $Idioma } |
+    $chosenVoice = ($installed | Where-Object { $_.Culture -eq $Language } |
         Select-Object -First 1).Name
 }
 
-if (-not $vozEscolhida) {
-    $lista = ($instaladas | ForEach-Object { "$($_.Name) [$($_.Culture)]" }) -join ', '
-    throw "Nenhuma voz $Idioma instalada. Disponiveis: $lista. " +
+if (-not $chosenVoice) {
+    $list = ($installed | ForEach-Object { "$($_.Name) [$($_.Culture)]" }) -join ', '
+    throw "Nenhuma voz $Language instalada. Disponiveis: $list. " +
           'Instale uma voz pt-BR em Configuracoes > Hora e idioma > Fala.'
 }
-Write-Host "Voz: $vozEscolhida" -ForegroundColor DarkGray
+Write-Host "Voz: $chosenVoice" -ForegroundColor DarkGray
 
 foreach ($item in @(
-    @{ Nome = 'fala_apresentacao'; Texto = $apresentacao },
-    @{ Nome = 'fala_adversarial';  Texto = $adversarial }
+    @{ Name = 'presentation_speech'; Text = $presentationSpeech },
+    @{ Name = 'adversarial_speech';  Text = $adversarial }
 )) {
-    Write-Host "Sintetizando $($item.Nome).wav..." -ForegroundColor Cyan
-    $sintetizador = New-Object System.Speech.Synthesis.SpeechSynthesizer
-    $sintetizador.SelectVoice($vozEscolhida)
-    $arquivo = Join-Path $pasta "$($item.Nome).wav"
-    $sintetizador.SetOutputToWaveFile($arquivo)
-    $sintetizador.Speak($item.Texto)
-    $sintetizador.Dispose()
+    Write-Host "Sintetizando $($item.Name).wav..." -ForegroundColor Cyan
+    $synthesizer = New-Object System.Speech.Synthesis.SpeechSynthesizer
+    $synthesizer.SelectVoice($chosenVoice)
+    $file = Join-Path $folder "$($item.Name).wav"
+    $synthesizer.SetOutputToWaveFile($file)
+    $synthesizer.Speak($item.Text)
+    $synthesizer.Dispose()
 
-    $mb = [math]::Round((Get-Item $arquivo).Length / 1MB, 2)
-    Write-Host "  $arquivo — $mb MB" -ForegroundColor Green
+    $mb = [math]::Round((Get-Item $file).Length / 1MB, 2)
+    Write-Host "  $file — $mb MB" -ForegroundColor Green
 }
 
 Write-Host ''
 Write-Host 'Fixtures prontas. Para a sessao legitima:' -ForegroundColor Yellow
-Write-Host "  .\scripts\testar_fluxo.ps1 -Apresentacao $Destino/tcc_slides.pdf -Audio $Destino/fala_apresentacao.wav"
+Write-Host "  .\scripts\test_flow.ps1 -Presentation $Destination/tcc_slides.pdf -Audio $Destination/presentation_speech.wav"
 Write-Host 'Para o teste adversarial obrigatorio (mesmo PDF, audio fora do tema):' -ForegroundColor Yellow
-Write-Host "  .\scripts\testar_fluxo.ps1 -Apresentacao $Destino/tcc_slides.pdf -Audio $Destino/fala_adversarial.wav"
+Write-Host "  .\scripts\test_flow.ps1 -Presentation $Destination/tcc_slides.pdf -Audio $Destination/adversarial_speech.wav"

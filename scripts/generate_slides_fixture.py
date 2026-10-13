@@ -1,6 +1,6 @@
 """Gera o PDF de apresentação usado nos testes end-to-end e no teste adversarial.
 
-Roda DENTRO do container (`docker compose exec api python scripts/gerar_slides_fixture.py`),
+Roda DENTRO do container (`docker compose exec api python scripts/generate_slides_fixture.py`),
 porque é lá que o PyMuPDF está instalado — o §4 do CLAUDE.md diz que tudo roda no Docker.
 
 O conteúdo é uma apresentação de TCC plausível, com afirmações que uma banca cobraria:

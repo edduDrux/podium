@@ -7,9 +7,9 @@ faltando aqui, toda a análise daquela sessão parte de material incompleto.
 
 Roda DENTRO do container, onde PyMuPDF e python-pptx estão instalados:
 
-    docker compose exec api python -m scripts.extrair_slides storage/_fixtures/tcc_slides.pdf
+    docker compose exec api python -m scripts.extract_slides storage/_fixtures/tcc_slides.pdf
 
-(Gere o PDF de exemplo antes, se precisar: `python -m scripts.gerar_slides_fixture`.)
+(Gere o PDF de exemplo antes, se precisar: `python -m scripts.generate_slides_fixture`.)
 """
 
 import sys
@@ -21,7 +21,7 @@ from app.domain import slides
 
 def main() -> int:
     if len(sys.argv) != 2:
-        print("Uso: python -m scripts.extrair_slides <arquivo.pdf|arquivo.pptx>")
+        print("Uso: python -m scripts.extract_slides <arquivo.pdf|arquivo.pptx>")
         return 2
 
     path = Path(sys.argv[1])

@@ -3,7 +3,7 @@
 Os endpoints recebem a sessão de banco e a apresentação por dependência. Trocá-las por
 dublês com `app.dependency_overrides` isola o que estes testes verificam — o contrato
 HTTP: status e corpo da resposta — sem subir Postgres (DECISOES §11). As consultas SQL de
-verdade ficam cobertas pelo `scripts/testar_fluxo.ps1`.
+verdade ficam cobertas pelo `scripts/test_flow.ps1`.
 
 O `ASGITransport` não dispara o `lifespan` da aplicação: a reconciliação de sessões e a
 limpeza do storage, que precisam de banco e disco, não rodam aqui.

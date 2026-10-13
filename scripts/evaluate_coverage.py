@@ -7,7 +7,7 @@ passe uma transcrição sobre outro assunto e o alerta de descolamento deve acen
 
 Roda DENTRO do container:
 
-    docker compose exec api python -m scripts.avaliar_cobertura \
+    docker compose exec api python -m scripts.evaluate_coverage \
         storage/_fixtures/tcc_slides.pdf transcricao.txt
 """
 
@@ -21,7 +21,7 @@ from app.domain import coverage, slides
 
 def main() -> int:
     if len(sys.argv) != 3:
-        print("Uso: python -m scripts.avaliar_cobertura <arquivo.pdf|pptx> <transcricao.txt>")
+        print("Uso: python -m scripts.evaluate_coverage <arquivo.pdf|pptx> <transcricao.txt>")
         return 2
 
     path = Path(sys.argv[1])

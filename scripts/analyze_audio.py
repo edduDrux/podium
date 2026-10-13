@@ -6,8 +6,8 @@ passada como arquivo de texto. Sem ela, o script mostra duração e pausas e zer
 
 Roda DENTRO do container, onde o FFmpeg está instalado:
 
-    docker compose exec api python -m scripts.analisar_audio storage/_fixtures/fala.wav
-    docker compose exec api python -m scripts.analisar_audio fala.mp3 transcricao.txt
+    docker compose exec api python -m scripts.analyze_audio storage/_fixtures/fala.wav
+    docker compose exec api python -m scripts.analyze_audio fala.mp3 transcricao.txt
 """
 
 import sys
@@ -18,7 +18,7 @@ from app.adapters import audio
 
 def main() -> int:
     if len(sys.argv) not in (2, 3):
-        print("Uso: python -m scripts.analisar_audio <audio> [transcricao.txt]")
+        print("Uso: python -m scripts.analyze_audio <audio> [transcricao.txt]")
         return 2
 
     path = Path(sys.argv[1])

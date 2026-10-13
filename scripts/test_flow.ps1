@@ -3,18 +3,18 @@
     Executa o fluxo completo do PODIUM: init -> audio -> analyze -> polling -> feedback.
 
 .EXAMPLE
-    .\scripts\testar_fluxo.ps1 -Apresentacao storage\teste.pptx -Audio storage\fala_teste.wav
+    .\scripts\test_flow.ps1 -Presentation storage\teste.pptx -Audio storage\fala_teste.wav
 
 .EXAMPLE
-    .\scripts\testar_fluxo.ps1 -Apresentacao "C:\meu_tcc.pdf" -Audio "C:\minha_fala.m4a" -Persona especialista_tecnico
+    .\scripts\test_flow.ps1 -Presentation "C:\meu_tcc.pdf" -Audio "C:\minha_fala.m4a" -Persona technical_expert
 #>
 param(
-    [Parameter(Mandatory = $true)][string]$Apresentacao,
+    [Parameter(Mandatory = $true)][string]$Presentation,
     [Parameter(Mandatory = $true)][string]$Audio,
-    [ValidateSet('professor_rigoroso', 'orientador_acolhedor', 'especialista_tecnico')]
-    [string]$Persona = 'professor_rigoroso',
+    [ValidateSet('strict_professor', 'supportive_advisor', 'technical_expert')]
+    [string]$Persona = 'strict_professor',
     [string]$BaseUrl = 'http://localhost:8000/api/v1',
-    [int]$TimeoutSegundos = 600
+    [int]$TimeoutSeconds = 600
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,44 +34,44 @@ function Invoke-Podium {
         extraivel) virava um objeto sem `session_id` e o erro exibido era o JSON cru — a
         causa real, que a API explica em `detail`, ficava escondida dentro da estrutura.
     #>
-    param([string[]]$CurlArgs, [string]$Etapa = 'A chamada')
+    param([string[]]$CurlArgs, [string]$Step = 'A chamada')
 
     $status = curl.exe -s -o $tmp -w '%{http_code}' @CurlArgs
-    $corpo = Get-Content $tmp -Raw -Encoding UTF8
+    $body = Get-Content $tmp -Raw -Encoding UTF8
 
     if ($status -notmatch '^2\d\d$') {
-        $detalhe = $corpo
-        $erro = $corpo | ConvertFrom-Json -ErrorAction SilentlyContinue
-        if ($erro -and $erro.detail) {
+        $detail = $body
+        $errorBody = $body | ConvertFrom-Json -ErrorAction SilentlyContinue
+        if ($errorBody -and $errorBody.detail) {
             # O 422 de validacao do FastAPI traz `detail` como lista de objetos, nao string.
-            $detalhe = if ($erro.detail -is [string]) { $erro.detail }
-                       else { $erro.detail | ConvertTo-Json -Compress -Depth 5 }
+            $detail = if ($errorBody.detail -is [string]) { $errorBody.detail }
+                       else { $errorBody.detail | ConvertTo-Json -Compress -Depth 5 }
         }
-        throw "$Etapa falhou (HTTP $status): $detalhe"
+        throw "$Step falhou (HTTP $status): $detail"
     }
 
-    return ($corpo | ConvertFrom-Json)
+    return ($body | ConvertFrom-Json)
 }
 
-foreach ($caminho in @($Apresentacao, $Audio)) {
-    if (-not (Test-Path $caminho)) { throw "Arquivo nao encontrado: $caminho" }
+foreach ($path in @($Presentation, $Audio)) {
+    if (-not (Test-Path $path)) { throw "Arquivo nao encontrado: $path" }
 }
 
-$apresentacaoPath = (Resolve-Path $Apresentacao).Path
+$presentationPath = (Resolve-Path $Presentation).Path
 $audioPath = (Resolve-Path $Audio).Path
 
 Write-Host ""
 Write-Host "PODIUM - teste de fluxo completo" -ForegroundColor Cyan
-Write-Host "  apresentacao: $apresentacaoPath"
+Write-Host "  apresentacao: $presentationPath"
 Write-Host "  audio       : $audioPath"
 Write-Host "  persona     : $Persona"
 Write-Host ""
 
 # --- 1. Cria a sessao e envia a apresentacao -------------------------------
 Write-Host "[1/4] Criando sessao e extraindo os slides..." -ForegroundColor Yellow
-$init = Invoke-Podium -Etapa 'Criacao da sessao (/init)' -CurlArgs @(
+$init = Invoke-Podium -Step 'Criacao da sessao (/init)' -CurlArgs @(
     '-X', 'POST', "$BaseUrl/presentations/init",
-    '-F', "file=@$apresentacaoPath",
+    '-F', "file=@$presentationPath",
     '-F', "persona=$Persona"
 )
 if (-not $init.session_id) { throw "Falha ao criar a sessao: $($init | ConvertTo-Json -Depth 5)" }
@@ -85,43 +85,43 @@ if ($init.slides_char_count -eq 0) {
 
 # --- 2. Envia o audio ------------------------------------------------------
 Write-Host "[2/4] Enviando o audio..." -ForegroundColor Yellow
-$upload = Invoke-Podium -Etapa 'Envio do audio (/audio)' -CurlArgs @(
+$upload = Invoke-Podium -Step 'Envio do audio (/audio)' -CurlArgs @(
     '-X', 'POST', "$BaseUrl/presentations/$sessionId/audio",
     '-F', "file=@$audioPath"
 )
-$duracao = [math]::Round([double]$upload.duration_seconds, 1)
-Write-Host "      recebido: $($upload.received_bytes) bytes  |  duracao: $duracao s"
+$duration = [math]::Round([double]$upload.duration_seconds, 1)
+Write-Host "      recebido: $($upload.received_bytes) bytes  |  duracao: $duration s"
 
 # --- 3. Dispara a analise (assincrona) -------------------------------------
 Write-Host "[3/4] Disparando a analise (resposta imediata, processa em 2o plano)..." -ForegroundColor Yellow
-$analise = Invoke-Podium -Etapa 'Disparo da analise (/analyze)' -CurlArgs @(
+$analysis = Invoke-Podium -Step 'Disparo da analise (/analyze)' -CurlArgs @(
     '-X', 'POST', "$BaseUrl/presentations/$sessionId/analyze"
 )
-Write-Host "      status  : $($analise.status)"
+Write-Host "      status  : $($analysis.status)"
 
 # --- 4. Polling ate concluir ----------------------------------------------
 Write-Host "[4/4] Aguardando o processamento (STT + LLM)..." -ForegroundColor Yellow
-$inicio = Get-Date
+$start = Get-Date
 do {
     Start-Sleep -Seconds 3
-    $sessao = Invoke-Podium -Etapa 'Consulta de status' -CurlArgs @(
+    $session = Invoke-Podium -Step 'Consulta de status' -CurlArgs @(
         "$BaseUrl/presentations/$sessionId"
     )
-    $decorrido = [int]((Get-Date) - $inicio).TotalSeconds
-    Write-Host "      ${decorrido}s -> $($sessao.status)"
+    $elapsed = [int]((Get-Date) - $start).TotalSeconds
+    Write-Host "      ${decorrido}s -> $($session.status)"
 
-    if ($decorrido -gt $TimeoutSegundos) { throw "Timeout apos $TimeoutSegundos s." }
-} while ($sessao.status -eq 'processing')
+    if ($elapsed -gt $TimeoutSeconds) { throw "Timeout apos $TimeoutSeconds s." }
+} while ($session.status -eq 'processing')
 
-if ($sessao.status -eq 'failed') {
+if ($session.status -eq 'failed') {
     Write-Host ""
-    Write-Host "FALHOU: $($sessao.error_message)" -ForegroundColor Red
+    Write-Host "FALHOU: $($session.error_message)" -ForegroundColor Red
     Remove-Item $tmp -ErrorAction SilentlyContinue
     exit 1
 }
 
 # --- Resultado -------------------------------------------------------------
-$fb = Invoke-Podium -Etapa 'Busca do feedback (/feedback)' -CurlArgs @(
+$fb = Invoke-Podium -Step 'Busca do feedback (/feedback)' -CurlArgs @(
     "$BaseUrl/presentations/$sessionId/feedback"
 )
 
@@ -130,7 +130,7 @@ Write-Host "=== TRANSCRICAO ===" -ForegroundColor Green
 Write-Host $fb.transcript
 Write-Host ""
 Write-Host "=== FORMA (metricas vocais) ===" -ForegroundColor Green
-$m = $fb.metrics
+$m = $fb.delivery_metrics
 # `speech_seconds` aparece junto do ritmo porque e o divisor dele: o wpm e calculado
 # sobre o tempo de fala, nao sobre a duracao do arquivo, e sem os dois o numero nao e
 # interpretavel.
@@ -144,7 +144,7 @@ Write-Host "=== CONTEUDO (perguntas da banca) ===" -ForegroundColor Green
 # quantas perguntas o modelo produziu contra quantas sobreviveram a checagem de evidencia.
 # Rodar o teste sem exibi-la e rodar o teste sem ler o resultado.
 Write-Host ("  aterramento    : {0} de {1} aprovadas (taxa {2})" -f `
-    $fb.perguntas_aprovadas, $fb.perguntas_geradas, $fb.taxa_aterramento) -ForegroundColor Cyan
+    $fb.questions_approved, $fb.questions_generated, $fb.grounding_rate) -ForegroundColor Cyan
 Write-Host ""
 
 if (-not $fb.questions) {
@@ -164,8 +164,8 @@ foreach ($q in $fb.questions) {
     # As quebras de linha do trecho viram espaco so na exibicao: o extrator preserva a
     # quebra do slide original, e imprimi-la crua desalinha o bloco. O valor comparado
     # pelo aterramento e o do JSON, nao este.
-    $evidencia = ($q.trecho_literal -replace '\s*\r?\n\s*', ' ')
-    Write-Host ("     evidencia [slide {0}]: {1}" -f $q.slide_origem, $evidencia) -ForegroundColor DarkGray
+    $evidence = ($q.quote -replace '\s*\r?\n\s*', ' ')
+    Write-Host ("     evidencia [slide {0}]: {1}" -f $q.slide_number, $evidence) -ForegroundColor DarkGray
     if ($q.rationale) { Write-Host ("     motivo: {0}" -f $q.rationale) -ForegroundColor DarkGray }
     Write-Host ""
     $i++
