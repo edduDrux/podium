@@ -79,9 +79,12 @@ def test_prompt_json_example_matches_the_parser():
     prompt = panel.system_prompt(PersonaType.STRICT_PROFESSOR)
     example = json.loads(prompt[prompt.index("{") : prompt.rindex("}") + 1])
 
-    (question,) = panel.parse_questions(example["questions"])
+    questions = panel.parse_questions(example["questions"])
 
-    assert question.slide_number == 3
+    assert [(q.source, q.slide_number) for q in questions] == [
+        ("slides", 3),
+        ("speech", None),
+    ]
 
 
 @pytest.mark.parametrize("persona", list(PersonaType))

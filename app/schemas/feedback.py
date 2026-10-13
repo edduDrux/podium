@@ -4,7 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from app.domain.coverage import CoverageResult
 from app.domain.delivery import DeliveryMetrics
-from app.domain.panel import Question
+from app.domain.panel import Question, QuestionSource
 
 
 class QuestionResponse(BaseModel):
@@ -19,13 +19,23 @@ class QuestionResponse(BaseModel):
 
     question: str
     rationale: str | None = Field(default=None, description="Por que a banca faria essa pergunta.")
-    slide_number: int = Field(
-        description="Número do slide que originou a pergunta (marcador [Slide N])."
+    # Feedback gravado antes do trecho de fala não tem `source`: era sempre slide.
+    source: QuestionSource = Field(
+        default=QuestionSource.SLIDES,
+        description="De onde vem o trecho que ancora a pergunta: slides ou fala.",
+    )
+    slide_number: int | None = Field(
+        default=None,
+        description=(
+            "Número do slide de origem (marcador [Slide N]); nulo quando a origem é a fala."
+        ),
     )
     quote: str = Field(
         min_length=15,
         max_length=400,
-        description="Trecho copiado literalmente do slide que sustenta a pergunta.",
+        description=(
+            "Trecho copiado literalmente da origem (slide ou fala) que sustenta a pergunta."
+        ),
     )
 
     @classmethod
@@ -34,6 +44,7 @@ class QuestionResponse(BaseModel):
         return cls(
             question=question.text,
             rationale=question.rationale,
+            source=question.source,
             slide_number=question.slide_number,
             quote=question.quote,
         )

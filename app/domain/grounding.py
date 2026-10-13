@@ -48,6 +48,7 @@ def _numbers(text: str) -> set[str]:
 def validate(
     question: Question,
     slides: dict[int, str],
+    transcript: str,
     min_score: int,
 ) -> tuple[bool, str | None]:
     """Aprova a pergunta ou devolve o motivo da rejeição.
@@ -55,10 +56,21 @@ def validate(
     O motivo é devolvido em vez de apenas `False` porque ele é o dado de auditoria: saber
     *por que* o modelo falhou (citou slide inexistente, parafraseou, alterou um número,
     copiou a frase) distingue um prompt ruim de um modelo ruim.
+
+    A origem declarada decide contra o que se confere: o slide apontado ou a transcrição.
+    As três checagens seguintes são as mesmas para as duas — o modelo não ganha folga
+    por citar a fala em vez do slide.
     """
-    content = slides.get(question.slide_number)
+    # Comparado pelo valor, e não pela classe: este módulo não importa `panel` em
+    # tempo de execução (o `panel` é que o importa).
+    if question.source == "speech":
+        content = transcript or None
+        missing = "NO_SPEECH"
+    else:
+        content = slides.get(question.slide_number) if question.slide_number is not None else None
+        missing = "UNKNOWN_SLIDE"
     if content is None:
-        return False, "UNKNOWN_SLIDE"
+        return False, missing
 
     normalized_content = _normalize(content)
 
@@ -70,7 +82,7 @@ def validate(
     # "12 participantes" por "40 participantes" num trecho copiado dá `partial_ratio`
     # 96.2 (medido) e passa em qualquer limiar praticável. Número alterado é o erro mais
     # perigoso diante de uma banca — a checagem é conjuntiva: o trecho precisa passar no
-    # difuso E cada número dele precisa existir literalmente no slide de origem.
+    # difuso E cada número dele precisa existir literalmente na origem.
     if _numbers(question.quote) - _numbers(content):
         return False, "NUMBER_NOT_FOUND"
 

@@ -25,6 +25,7 @@ from tests.services.conftest import (
     FAKE_SIGNAL,
     GROUNDED_ITEM,
     INVENTED_ITEM,
+    SPEECH_ITEM,
     BlockedLanguageModel,
     FakeDatabase,
     FakeLanguageModel,
@@ -77,6 +78,19 @@ async def test_invented_question_never_reaches_the_feedback(presentation):
     assert response.questions_generated == 1
     (feedback,) = db.added
     assert feedback.questions == []
+
+
+@pytest.mark.asyncio
+async def test_question_anchored_in_the_speech_is_grounded_against_the_transcript(presentation):
+    """Na análise completa a pergunta pode citar a fala; o trecho é conferido no que foi dito."""
+    model = FakeLanguageModel(model_answer([SPEECH_ITEM]))
+
+    await analysis_service.run_pipeline(FakeDatabase(), presentation, FakeTranscriber(), model)
+    response = feedback_record.to_response(presentation)
+
+    (question,) = response.questions
+    assert question.source == "speech"
+    assert question.slide_number is None
 
 
 @pytest.mark.asyncio

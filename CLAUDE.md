@@ -153,7 +153,8 @@ Tudo mora em `app/domain/slides.py` — emitir (`block`, `assemble`), normalizar
 - **Degradar sem inventar**: zero perguntas validadas = COMPLETED com lista vazia e
   motivo em `content_analysis`. Nunca FAILED, nunca preencher com pergunta não validada.
 - **Métricas de forma independem do STT** — derivam do sinal.
-- **Toda pergunta é rastreável** até um trecho literal de um slide identificado.
+- **Toda pergunta é rastreável** até um trecho literal do material analisado — um slide
+  identificado ou a fala transcrita —, conferido mecanicamente contra a origem declarada.
 
 ## 10. Convenções de código
 

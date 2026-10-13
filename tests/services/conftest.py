@@ -40,8 +40,17 @@ def model_answer(questions: list[dict[str, Any]], content_analysis: str = "") ->
 GROUNDED_ITEM = {
     "question": "Por que a metodologia experimental foi escolhida?",
     "rationale": None,
+    "source": "slides",
     "slide_number": 1,
     "quote": "A metodologia experimental adotada nesta pesquisa",
+}
+# Ancorada na fala: o trecho é literal da transcrição do `FakeTranscriber`.
+SPEECH_ITEM = {
+    "question": "O que motivou essa escolha de abordagem?",
+    "rationale": None,
+    "source": "speech",
+    "slide_number": None,
+    "quote": "falei sobre a metodologia experimental",
 }
 INVENTED_ITEM = {
     "question": "Quantos participantes responderam ao questionário?",
