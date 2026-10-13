@@ -20,8 +20,6 @@ from app.models.llm_call import LLMCall
 
 logger = logging.getLogger(__name__)
 
-PROVIDER_GEMINI = "gemini"
-
 
 async def register(
     presentation_id: uuid.UUID,
@@ -72,19 +70,20 @@ class DatabaseAudit:
         self,
         presentation_id: uuid.UUID | None,
         stage: LLMCallStage,
+        provider: str,
         model: str,
         temperature: float,
     ):
-        return measure(presentation_id, stage, model, temperature)
+        return measure(presentation_id, stage, provider, model, temperature)
 
 
 @asynccontextmanager
 async def measure(
     presentation_id: uuid.UUID | None,
     stage: LLMCallStage,
+    provider: str,
     model: str,
     temperature: float,
-    provider: str = PROVIDER_GEMINI,
 ):
     """Cronometra o bloco e grava o registro de auditoria, tendo ele falhado ou não.
 

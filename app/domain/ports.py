@@ -43,6 +43,7 @@ class Audit(Protocol):
         self,
         presentation_id: uuid.UUID | None,
         stage: LLMCallStage,
+        provider: str,
         model: str,
         temperature: float,
     ) -> AbstractAsyncContextManager[dict[str, int | None]]:
@@ -51,6 +52,9 @@ class Audit(Protocol):
         Cede um dicionário mutável onde o adaptador deposita os tokens quando a resposta
         chega. Gravar auditoria nunca pode derrubar o pipeline: a implementação engole as
         próprias falhas, mas repropaga intacta a exceção de quem foi medido.
+
+        `provider` vem de quem chama: só o adaptador sabe com qual provedor está falando,
+        e o capítulo de validação compara custo e latência por provedor.
         """
         ...
 

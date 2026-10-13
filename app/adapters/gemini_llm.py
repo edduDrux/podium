@@ -18,6 +18,9 @@ from app.domain.ports import Audit
 
 logger = logging.getLogger(__name__)
 
+# Gravado em `llm_calls.provider`: o relatório compara custo e latência por provedor.
+PROVIDER = "gemini"
+
 _client: AsyncOpenAI | None = None
 
 
@@ -59,6 +62,7 @@ class GeminiLanguageModel:
         async with self._audit.measure(
             presentation_id=presentation_id,
             stage=LLMCallStage.QUESTION_GENERATION,
+            provider=PROVIDER,
             model=self._model,
             temperature=self._temperature,
         ) as usage:

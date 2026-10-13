@@ -14,6 +14,9 @@ from app.domain.text import clean_transcript
 
 logger = logging.getLogger(__name__)
 
+# Gravado em `llm_calls.provider`: o relatório compara custo e latência por provedor.
+PROVIDER = "gemini"
+
 # A transcrição precisa ser fiel, não criativa.
 STT_TEMPERATURE = 0.0
 
@@ -119,6 +122,7 @@ async def _transcribe(
     async with audit.measure(
         presentation_id=presentation_id,
         stage=LLMCallStage.STT,
+        provider=PROVIDER,
         model=settings.STT_MODEL,
         temperature=STT_TEMPERATURE,
     ) as usage:

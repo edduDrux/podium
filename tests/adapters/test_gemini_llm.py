@@ -21,12 +21,12 @@ class RecordingAudit:
     def __init__(self) -> None:
         self.records: list[dict] = []
 
-    def measure(self, presentation_id, stage, model, temperature):
+    def measure(self, presentation_id, stage, provider, model, temperature):
         @asynccontextmanager
         async def _measure():
             usage = {"input_tokens": None, "output_tokens": None}
             yield usage
-            self.records.append({"stage": stage, "model": model, **usage})
+            self.records.append({"stage": stage, "provider": provider, "model": model, **usage})
 
         return _measure()
 
@@ -77,6 +77,7 @@ async def test_complete_sends_the_prompt_and_returns_the_text(monkeypatch):
     assert audit.records == [
         {
             "stage": LLMCallStage.QUESTION_GENERATION,
+            "provider": "gemini",
             "model": "gemini-teste",
             "input_tokens": 120,
             "output_tokens": 40,
