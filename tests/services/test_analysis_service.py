@@ -22,8 +22,9 @@ from app.domain.panel import GenerationResult, Question
 from app.domain.ports import Panel, Transcriber
 from app.models.feedback import Feedback
 from app.models.presentation import Presentation
-from app.schemas.feedback import DeliveryMetricsResponse, QuestionResponse
+from app.schemas.feedback import QuestionResponse
 from app.services import analysis_service
+from tests.services.conftest import FAKE_SIGNAL
 
 SLIDES_TEXT = slides.assemble(
     [
@@ -77,25 +78,6 @@ class FakePanel:
         self, slides_text, transcript, persona, presentation_id=None
     ) -> GenerationResult:
         return self._result
-
-
-@pytest.fixture(autouse=True)
-def stubbed_audio(monkeypatch):
-    """Neutraliza o áudio: aqui se testa orquestração, não decodificação.
-
-    As métricas de forma têm testes próprios sobre áudio real em `test_audio_service.py`.
-    """
-    monkeypatch.setattr(audio, "normalize_for_stt", lambda path: path)
-    monkeypatch.setattr(
-        audio,
-        "analyze_delivery",
-        lambda path, transcript: DeliveryMetricsResponse(
-            duration_seconds=60.0,
-            speech_seconds=50.0,
-            word_count=len(transcript.split()),
-            words_per_minute=120.0,
-        ),
-    )
 
 
 @pytest.fixture
@@ -282,11 +264,11 @@ async def test_pipeline_does_not_block_the_event_loop(presentation, monkeypatch)
     rodar: livre, ela anda ~30 vezes; bloqueado, nenhuma.
     """
 
-    def slow_analyze_delivery(audio_path, transcript):
+    def slow_measure_signal(decoded):
         time.sleep(0.3)
-        return DeliveryMetricsResponse()
+        return FAKE_SIGNAL
 
-    monkeypatch.setattr(audio, "analyze_delivery", slow_analyze_delivery)
+    monkeypatch.setattr(audio, "measure_signal", slow_measure_signal)
     ticks = 0
 
     async def ticker():

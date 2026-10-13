@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import uuid
+from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
@@ -13,7 +14,7 @@ from app.adapters import audio
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.enums import PresentationStatus
-from app.domain import coverage, slides
+from app.domain import coverage, delivery, slides
 from app.domain.panel import GenerationResult
 from app.domain.ports import Panel, Transcriber
 from app.models.feedback import Feedback
@@ -105,13 +106,15 @@ async def run_pipeline(
         # cobertura recalibrado — não muda o que foi dito, e a própria sessão d5caa4fd
         # pagou o STT duas vezes por isso. A transcrição pertence ao áudio: o endpoint
         # /audio a apaga ao receber áudio novo, então "existe" significa "é deste áudio".
+        #
+        # O áudio é decodificado UMA vez por análise, numa thread: decodificar é trabalho
+        # de CPU do pydub/FFmpeg e, no event loop, congelaria todas as requisições
+        # (`asyncio.to_thread`, e não o `run_in_threadpool` dos endpoints, para que o caso
+        # de uso não dependa do FastAPI). Da mesma decodificação saem a medição do sinal e,
+        # quando o STT vai rodar, a versão mono 16 kHz.
         transcript = _reusable_transcript(presentation)
         if transcript is None:
-            # Decodificar e reexportar o áudio é trabalho de CPU do pydub/FFmpeg: no event
-            # loop, congelaria todas as requisições enquanto durasse. `asyncio.to_thread`,
-            # e não o `run_in_threadpool` dos endpoints, para que o caso de uso não
-            # dependa do FastAPI.
-            stt_ready_path = await asyncio.to_thread(audio.normalize_for_stt, audio_path)
+            signal, stt_ready_path = await asyncio.to_thread(_measure_and_export, audio_path)
             transcript = await transcriber.transcribe(
                 stt_ready_path, presentation_id=presentation.id
             )
@@ -122,6 +125,7 @@ async def run_pipeline(
             # A transcrição pode ter vindo pronta do headset (transcript_service) ou de
             # uma análise anterior; a origem gravada com ela viaja junto, e um feedback
             # anterior a esse registro só pode ter vindo do STT daqui.
+            signal = await asyncio.to_thread(_measure, audio_path)
             origin = transcript_service.recorded_origin(
                 presentation.feedback
             ) or transcript_service.describe(transcript_service.ORIGIN_SERVER, None)
@@ -131,8 +135,8 @@ async def run_pipeline(
                 transcript_service.label(origin),
             )
 
-        # 2. FORMA: ritmo e pausas
-        delivery_metrics = await asyncio.to_thread(audio.analyze_delivery, audio_path, transcript)
+        # 2. FORMA: ritmo e pausas, calculados no domínio sobre o sinal já medido
+        delivery_metrics = delivery.compute(signal, transcript)
 
         # 2.5 COBERTURA: material × transcrição, ANTES e independente do LLM — se a
         # banca degradar para zero perguntas, a resposta a "o que ficou por apresentar?"
@@ -155,7 +159,7 @@ async def run_pipeline(
         feedback.questions = [q.model_dump() for q in questions]
         feedback.content_analysis = content_analysis
         feedback.metrics = {
-            **delivery_metrics.model_dump(),
+            **delivery_metrics._asdict(),
             GROUNDING_KEY: {
                 "questions_generated": generation.questions_generated,
                 "questions_approved": generation.questions_approved,
@@ -177,7 +181,7 @@ async def run_pipeline(
             transcript=transcript,
             questions=questions,
             content_analysis=content_analysis,
-            delivery_metrics=delivery_metrics,
+            delivery_metrics=DeliveryMetricsResponse.from_metrics(delivery_metrics),
             questions_generated=generation.questions_generated,
             questions_approved=generation.questions_approved,
             slides_truncated=generation.slides_truncated,
@@ -192,6 +196,21 @@ async def run_pipeline(
         presentation.error_message = str(exc)
         await db.commit()
         raise
+
+
+def _measure_and_export(audio_path: str) -> tuple[delivery.Signal, Path]:
+    """Decodifica uma vez e devolve o sinal medido e o arquivo para o STT.
+
+    Só o resultado sai da função: o áudio decodificado (centenas de MB numa fala de 15
+    min) é liberado aqui, antes da chamada ao STT, que leva minutos.
+    """
+    decoded = audio.load(audio_path)
+    return audio.measure_signal(decoded), audio.export_for_stt(decoded, audio_path)
+
+
+def _measure(audio_path: str) -> delivery.Signal:
+    """Decodifica uma vez e devolve só o sinal: a transcrição já existe."""
+    return audio.measure_signal(audio.load(audio_path))
 
 
 def _reusable_transcript(presentation: Presentation) -> str | None:

@@ -10,13 +10,11 @@ import uuid
 
 import pytest
 
-from app.adapters import audio
 from app.core.enums import PersonaType, PresentationStatus
 from app.domain import slides
 from app.domain.panel import GenerationResult
 from app.models.feedback import Feedback
 from app.models.presentation import Presentation
-from app.schemas.feedback import DeliveryMetricsResponse
 from app.services import analysis_service, transcript_service
 
 SLIDES_TEXT = slides.assemble([slides.block(1, "A metodologia experimental adotada")])
@@ -44,18 +42,6 @@ class FakePanel:
         self, slides_text, transcript, persona, presentation_id=None
     ) -> GenerationResult:
         return GenerationResult([], "", 0, 0)
-
-
-@pytest.fixture(autouse=True)
-def stubbed_audio(monkeypatch):
-    monkeypatch.setattr(audio, "normalize_for_stt", lambda path: path)
-    monkeypatch.setattr(
-        audio,
-        "analyze_delivery",
-        lambda path, transcript: DeliveryMetricsResponse(
-            duration_seconds=60.0, speech_seconds=50.0, word_count=len(transcript.split())
-        ),
-    )
 
 
 @pytest.fixture

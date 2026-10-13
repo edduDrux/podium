@@ -2,6 +2,7 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
+from app.domain.delivery import DeliveryMetrics
 from app.domain.panel import Question
 
 
@@ -81,6 +82,11 @@ class DeliveryMetricsResponse(BaseModel):
     pause_count: int = 0
     total_pause_seconds: float = 0.0
     longest_pause_seconds: float = 0.0
+
+    @classmethod
+    def from_metrics(cls, metrics: DeliveryMetrics) -> "DeliveryMetricsResponse":
+        """Converte as métricas do domínio no contrato da API."""
+        return cls(**metrics._asdict())
 
 
 class FeedbackResponse(BaseModel):
