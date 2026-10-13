@@ -153,6 +153,15 @@ async def upload_audio(
         bool, Form(description="True para gravar como mais um pedaço da mesma fala.")
     ] = False,
 ) -> AudioUploadResponse:
+    # Áudio novo devolve a sessão a `audio_received`. Durante a análise isso reabriria a
+    # trava do /analyze — que só recusa sessão em `processing` — e uma segunda análise
+    # rodaria em paralelo com a primeira, sobre um áudio que ela não conhece.
+    if presentation.status == PresentationStatus.PROCESSING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Esta sessão está sendo analisada; envie o áudio depois que ela terminar.",
+        )
+
     suffix = storage_service.audio_suffix(file.filename)
     duration: float | None = None
 
