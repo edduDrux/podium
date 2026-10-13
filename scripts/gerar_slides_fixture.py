@@ -9,7 +9,7 @@ amostra pequena. É isso que dá material para o LLM formular perguntas de verda
 de perguntas genéricas — um deck vazio não exercita o aterramento.
 
 O PDF fica em `storage/_fixtures/`, que é ignorado pelo git (`storage/*`) e a que a purga
-automática não toca: `storage_service._is_session_dir` só remove diretórios cujo nome é um
+automática não toca: `storage._is_session_dir` só remove diretórios cujo nome é um
 UUID válido.
 """
 

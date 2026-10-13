@@ -8,11 +8,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app import bootstrap
+from app.adapters import audio
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.enums import PresentationStatus
-from app.domain import cobertura, slides
-from app.domain.banca import ResultadoGeracao
+from app.domain import coverage, slides
+from app.domain.panel import ResultadoGeracao
 from app.domain.ports import BancaExaminadora, Transcritor
 from app.models.feedback import Feedback
 from app.models.presentation import Presentation
@@ -23,7 +25,7 @@ from app.schemas.feedback import (
     SlideCoverageReport,
     SpeechMetrics,
 )
-from app.services import audio_service, provedores, transcript_service
+from app.services import transcript_service
 
 logger = logging.getLogger(__name__)
 
@@ -83,8 +85,8 @@ async def run_pipeline(
     composição; num teste, um transcritor e uma banca falsos exercitam o pipeline inteiro
     sem rede, sem cota de IA e sem depender do humor do modelo.
     """
-    transcritor = transcritor or provedores.transcritor()
-    banca = banca or provedores.banca()
+    transcritor = transcritor or bootstrap.transcritor()
+    banca = banca or bootstrap.banca()
     presentation.status = PresentationStatus.PROCESSING
     presentation.error_message = None
     await db.commit()
@@ -109,7 +111,7 @@ async def run_pipeline(
             # loop, congelaria todas as requisições enquanto durasse. `asyncio.to_thread`,
             # e não o `run_in_threadpool` dos endpoints, para que o caso de uso não
             # dependa do FastAPI.
-            stt_ready_path = await asyncio.to_thread(audio_service.normalize_for_stt, audio_path)
+            stt_ready_path = await asyncio.to_thread(audio.normalize_for_stt, audio_path)
             transcript = await transcritor.transcrever(
                 stt_ready_path, presentation_id=presentation.id
             )
@@ -130,7 +132,7 @@ async def run_pipeline(
             )
 
         # 2. FORMA: ritmo e pausas
-        metrics = await asyncio.to_thread(audio_service.analyze_form, audio_path, transcript)
+        metrics = await asyncio.to_thread(audio.analyze_form, audio_path, transcript)
 
         # 2.5 COBERTURA: material × transcrição, ANTES e independente do LLM — se a
         # banca degradar para zero perguntas, a resposta a "o que ficou por apresentar?"
@@ -211,7 +213,7 @@ def _avaliar_cobertura(presentation: Presentation, transcript: str) -> SlideCove
     A raiz de composição é aqui: o domínio recebe os limiares por parâmetro e não sabe
     que existe um `settings`.
     """
-    resultado = cobertura.avaliar(
+    resultado = coverage.avaliar(
         slides.parse(presentation.slides_text or ""),
         transcript,
         limiar_apresentado=settings.COVERAGE_FULL_THRESHOLD,

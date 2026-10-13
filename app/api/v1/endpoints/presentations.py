@@ -16,6 +16,7 @@ from fastapi import (
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import CursorResult, update
 
+from app.adapters import audio, presentation_files, slide_renderer, storage
 from app.api.deps import CurrentPresentation, DbSession
 from app.core.config import settings
 from app.core.enums import PersonaType, PresentationStatus, ScenarioType
@@ -30,14 +31,7 @@ from app.schemas.presentation import (
     TranscriptAcceptedResponse,
     TranscriptSubmission,
 )
-from app.services import (
-    analysis_service,
-    audio_service,
-    slide_render_service,
-    slides_service,
-    storage_service,
-    transcript_service,
-)
+from app.services import analysis_service, transcript_service
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +65,7 @@ async def init_presentation(
     user_id: Annotated[uuid.UUID | None, Form()] = None,
 ) -> PresentationInitResponse:
     """Recebe cenário, persona e a apresentação do Cliente VR; extrai o texto dos slides."""
-    file_type = slides_service.detect_type(file.filename, file.content_type)
+    file_type = presentation_files.detect_type(file.filename, file.content_type)
     if file_type is None:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
@@ -80,30 +74,30 @@ async def init_presentation(
 
     session_id = uuid.uuid4()
     file_path = (
-        storage_service.session_dir(session_id)
-        / f"presentation{slides_service.extension_for(file_type)}"
+        storage.session_dir(session_id)
+        / f"presentation{presentation_files.extension_for(file_type)}"
     )
 
     try:
-        await storage_service.save_upload(file, file_path, max_bytes=settings.max_upload_size_bytes)
+        await storage.save_upload(file, file_path, max_bytes=settings.max_upload_size_bytes)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=str(exc)) from exc
 
     # PyMuPDF e python-pptx são síncronos: no event loop, um deck grande congelaria as
     # outras requisições durante a leitura.
-    if not await run_in_threadpool(slides_service.is_valid, file_path, file_type):
+    if not await run_in_threadpool(presentation_files.is_valid, file_path, file_type):
         file_path.unlink(missing_ok=True)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Não foi possível ler o arquivo {file_type.upper()} enviado.",
         )
 
-    slides_text = await run_in_threadpool(slides_service.extract_text, file_path, file_type)
+    slides_text = await run_in_threadpool(presentation_files.extract_text, file_path, file_type)
 
     # Recusar aqui, e não deixar o aterramento reprovar tudo lá na frente: sem texto o
     # usuário receberia uma sessão concluída e vazia, sem pista de que a causa foi o
     # arquivo. Falhar na ingestão diz o que fazer enquanto ainda dá para reenviar.
-    if not slides_service.has_extractable_text(slides_text):
+    if not presentation_files.has_extractable_text(slides_text):
         file_path.unlink(missing_ok=True)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -123,7 +117,7 @@ async def init_presentation(
         persona=persona,
         status=PresentationStatus.CREATED,
         file_path=str(file_path),
-        file_filename=file.filename or f"presentation{slides_service.extension_for(file_type)}",
+        file_filename=file.filename or f"presentation{presentation_files.extension_for(file_type)}",
         file_type=file_type,
         slides_text=slides_text,
     )
@@ -160,11 +154,11 @@ async def upload_audio(
             detail="Esta sessão está sendo analisada; envie o áudio depois que ela terminar.",
         )
 
-    suffix = storage_service.audio_suffix(file.filename)
+    suffix = storage.audio_suffix(file.filename)
     duration: float | None = None
 
     if is_chunk:
-        recebidos = storage_service.list_audio_chunks(presentation.id)
+        recebidos = storage.list_audio_chunks(presentation.id)
         if recebidos and recebidos[0].suffix != suffix:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -174,23 +168,23 @@ async def upload_audio(
                 ),
             )
 
-        destination = storage_service.next_chunk_path(presentation.id, suffix)
-        received = await storage_service.save_upload(file, destination)
+        destination = storage.next_chunk_path(presentation.id, suffix)
+        received = await storage.save_upload(file, destination)
         # Chunk isolado não tem duração de sessão nem é analisável sozinho: o áudio da
         # sessão só existe depois da junção, no /analyze — que é onde a duração é
         # validada. Zerar `audio_path` impede que um envio anterior seja analisado
         # no lugar dos chunks.
         presentation.audio_path = None
     else:
-        destination = storage_service.audio_path(presentation.id, suffix)
-        received = await storage_service.save_upload(file, destination)
+        destination = storage.audio_path(presentation.id, suffix)
+        received = await storage.save_upload(file, destination)
         # Um áudio inteiro substitui a sessão: chunks remanescentes de um envio anterior
         # seriam preferidos pelo /analyze e mascarariam o arquivo recém-chegado.
-        storage_service.discard_audio_chunks(presentation.id)
+        storage.discard_audio_chunks(presentation.id)
 
         try:
             # Ler a duração decodifica o áudio inteiro: trabalho de CPU, fora do loop.
-            duration = await run_in_threadpool(audio_service.get_duration_seconds, destination)
+            duration = await run_in_threadpool(audio.get_duration_seconds, destination)
         except Exception:
             logger.warning(
                 "Áudio da sessão %s não pôde ser decodificado no upload; a duração "
@@ -237,17 +231,17 @@ async def analyze_presentation(
     arriscaria timeout no Cliente VR. O VR acompanha pela `poll_url` até o status
     virar `completed` (ou `failed`) e então busca o feedback.
     """
-    chunks = storage_service.list_audio_chunks(presentation.id)
+    chunks = storage.list_audio_chunks(presentation.id)
     audio_path = presentation.audio_path
 
     if chunks:
         # Antes de qualquer processamento: os pedaços viram um arquivo único e íntegro.
         # Roda em threadpool porque decodificar e reexportar é trabalho de CPU e
         # bloquearia o event loop — junto com ele, o polling de todas as outras sessões.
-        destino = storage_service.audio_path(presentation.id, chunks[0].suffix)
+        destino = storage.audio_path(presentation.id, chunks[0].suffix)
         try:
-            audio_path = str(await run_in_threadpool(audio_service.concat_chunks, chunks, destino))
-        except audio_service.MixedChunkFormatsError as exc:
+            audio_path = str(await run_in_threadpool(audio.concat_chunks, chunks, destino))
+        except audio.MixedChunkFormatsError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
     if not audio_path:
@@ -259,7 +253,7 @@ async def analyze_presentation(
     # A duração só é confiável sobre o áudio inteiro: um chunk sozinho não diz nada
     # sobre o tamanho da apresentação.
     try:
-        duration = await run_in_threadpool(audio_service.get_duration_seconds, audio_path)
+        duration = await run_in_threadpool(audio.get_duration_seconds, audio_path)
     except Exception as exc:
         # Sem áudio legível não há nem métrica de forma nem transcrição — falhar aqui
         # avisa o Cliente VR na hora, em vez de deixar o pipeline morrer em segundo plano.
@@ -371,17 +365,17 @@ async def submit_transcript(
 async def get_slides_info(presentation: CurrentPresentation) -> SlidesInfoResponse:
     """Metadados para a tela da sala: o Cliente VR decide daqui quantas imagens pedir."""
     total = 0
-    if slide_render_service.renderizavel(presentation):
-        total = await run_in_threadpool(slide_render_service.contar_paginas, presentation.file_path)
+    if slide_renderer.renderizavel(presentation):
+        total = await run_in_threadpool(slide_renderer.contar_paginas, presentation.file_path)
 
     return SlidesInfoResponse(
         session_id=presentation.id,
         file_type=presentation.file_type,
         total=total,
         renderizavel=total > 0,
-        motivo=slide_render_service.motivo_de_nao_renderizar(presentation),
-        largura_padrao=slide_render_service.LARGURA_PADRAO,
-        largura_maxima=slide_render_service.LARGURA_MAXIMA,
+        motivo=slide_renderer.motivo_de_nao_renderizar(presentation),
+        largura_padrao=slide_renderer.LARGURA_PADRAO,
+        largura_maxima=slide_renderer.LARGURA_MAXIMA,
     )
 
 
@@ -405,18 +399,18 @@ async def get_slide_image(
     `slide_origem` das perguntas. É isso que deixa o cliente levar a parede ao slide que
     gerou a pergunta sem tabela de conversão nenhuma.
     """
-    if not slide_render_service.renderizavel(presentation):
+    if not slide_renderer.renderizavel(presentation):
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=slide_render_service.motivo_de_nao_renderizar(presentation),
+            detail=slide_renderer.motivo_de_nao_renderizar(presentation),
         )
 
-    largura_px = slide_render_service.largura_valida(largura)
+    largura_px = slide_renderer.largura_valida(largura)
     try:
         imagem = await run_in_threadpool(
-            slide_render_service.pagina_em_cache, presentation, numero, largura_px
+            slide_renderer.pagina_em_cache, presentation, numero, largura_px
         )
-    except slide_render_service.PaginaInexistenteError as exc:
+    except slide_renderer.PaginaInexistenteError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
     return Response(

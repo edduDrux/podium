@@ -15,9 +15,9 @@ from pathlib import Path
 
 import fitz  # PyMuPDF
 
+from app.adapters import storage
 from app.core.enums import SourceFileType
 from app.models.presentation import Presentation
-from app.services import storage_service
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ def pagina_em_cache(presentation: Presentation, numero: int, largura: int) -> by
     a cada volta gastaria CPU do servidor por nada. O cache mora na pasta da sessão, então
     a limpeza de retenção o leva junto com o PDF.
     """
-    pasta = storage_service.session_dir(presentation.id) / "slides"
+    pasta = storage.session_dir(presentation.id) / "slides"
     pasta.mkdir(parents=True, exist_ok=True)
     arquivo = pasta / f"slide_{numero:03d}_{largura}.png"
 

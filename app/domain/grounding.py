@@ -17,7 +17,7 @@ import re
 
 from rapidfuzz import fuzz
 
-from app.domain.texto import normalizar as _normalizar
+from app.domain.text import normalizar as _normalizar
 from app.schemas.feedback import GeneratedQuestion
 
 # Números com separadores internos ("1.000", "3,14") capturados inteiros, antes da

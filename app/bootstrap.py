@@ -8,10 +8,10 @@ As instâncias são únicas porque não guardam estado de sessão: o adaptador d
 reaproveita o cliente HTTP do SDK, e criar um por requisição desperdiçaria conexão.
 """
 
+from app.adapters.audit import AuditoriaBanco
+from app.adapters.gemini_llm import GeminiBanca
+from app.adapters.gemini_stt import GeminiTranscritor
 from app.domain.ports import BancaExaminadora, Transcritor
-from app.services.audit_service import AuditoriaBanco
-from app.services.llm_service import GeminiBanca
-from app.services.stt_service import GeminiTranscritor
 
 _auditoria = AuditoriaBanco()
 _transcritor: Transcritor = GeminiTranscritor(_auditoria)

@@ -22,7 +22,7 @@ baixos e configuráveis, e a plural simples é tolerada ("metodologia" ≡ "meto
 
 from typing import NamedTuple
 
-from app.domain.texto import normalizar
+from app.domain.text import normalizar
 
 # Palavras funcionais do português (já normalizadas: sem acento, minúsculas). Só afetam
 # a extração dos termos DOS SLIDES — a transcrição entra inteira. Tokens com menos de

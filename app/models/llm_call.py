@@ -19,7 +19,7 @@ class LLMCall(Base):
 
     É um log append-only — por isso não usa o `TimestampMixin` (um `updated_at` num
     registro que nunca muda seria ruído) e por isso nada aqui é atualizado depois de
-    gravado. A escrita nunca pode derrubar o pipeline: ver `audit_service.registrar`.
+    gravado. A escrita nunca pode derrubar o pipeline: ver `audit.registrar`.
     """
 
     __tablename__ = "llm_calls"

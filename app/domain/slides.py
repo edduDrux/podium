@@ -1,8 +1,8 @@
 """Contrato do marcador de slide: o formato que liga a extração ao aterramento.
 
 Produzir e interpretar o marcador moram no MESMO módulo de propósito. Antes, o formato
-`[Slide N]` era escrito por f-string em `pdf_service` e em `pptx_service` e lido por um
-regex em `grounding_service` — três literais independentes que só a disciplina mantinha
+`[Slide N]` era escrito por f-string em `pdf` e em `pptx` e lido por um
+regex em `grounding` — três literais independentes que só a disciplina mantinha
 em acordo, num ponto que é a âncora de evidência de todo o sistema. Aqui, mudar o formato
 sem mudar o parser exige editar linhas vizinhas.
 

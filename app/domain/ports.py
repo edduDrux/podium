@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from app.core.enums import LLMCallStage, PersonaType
-from app.domain.banca import ResultadoGeracao
+from app.domain.panel import ResultadoGeracao
 
 
 @runtime_checkable

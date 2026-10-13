@@ -15,8 +15,8 @@ Roda DENTRO do container, onde PyMuPDF e python-pptx estão instalados:
 import sys
 from pathlib import Path
 
+from app.adapters import presentation_files
 from app.domain import slides
-from app.services import slides_service
 
 
 def main() -> int:
@@ -29,16 +29,16 @@ def main() -> int:
         print(f"Arquivo não encontrado: {caminho}")
         return 2
 
-    file_type = slides_service.detect_type(caminho.name, content_type=None)
+    file_type = presentation_files.detect_type(caminho.name, content_type=None)
     if file_type is None:
         print(f"Formato não suportado: {caminho.suffix} (apenas .pdf e .pptx).")
         return 2
 
-    if not slides_service.is_valid(caminho, file_type):
+    if not presentation_files.is_valid(caminho, file_type):
         print(f"O arquivo não pôde ser aberto como {file_type.upper()}.")
         return 1
 
-    texto = slides_service.extract_text(caminho, file_type)
+    texto = presentation_files.extract_text(caminho, file_type)
     por_slide = slides.parse(texto)
 
     print(f"formato       : {file_type.upper()}")
@@ -46,7 +46,7 @@ def main() -> int:
     # A numeração pode ter buracos (páginas sem texto são puladas) — isso é correto,
     # e mostrá-la explícita evita confundir buraco legítimo com slide perdido.
     print(f"slides        : {len(por_slide)} -> números {sorted(por_slide)}")
-    if not slides_service.has_extractable_text(texto):
+    if not presentation_files.has_extractable_text(texto):
         print("AVISO: abaixo do mínimo de texto extraível — o /init recusaria este arquivo.")
 
     print("\n--- texto no formato do contrato ([Slide N]) ---\n")

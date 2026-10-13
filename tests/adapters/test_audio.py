@@ -10,7 +10,7 @@ import pytest
 from pydub import AudioSegment
 from pydub.generators import Sine
 
-from app.services import audio_service
+from app.adapters import audio
 
 FALA_MS = 2000
 PAUSA_MS = 1000
@@ -34,7 +34,7 @@ def exportar(tmp_path):
 
 def test_pausa_no_meio_e_contada(exportar):
     caminho = exportar(_fala() + AudioSegment.silent(PAUSA_MS) + _fala())
-    metricas = audio_service.analyze_form(
+    metricas = audio.analyze_form(
         caminho, "dez palavras ditas aqui neste teste de ritmo bem simples"
     )
 
@@ -47,7 +47,7 @@ def test_pausa_no_meio_e_contada(exportar):
 def test_silencio_nas_bordas_nao_e_pausa(exportar):
     """Silêncio antes de começar e depois de terminar não é pausa de oratória."""
     caminho = exportar(AudioSegment.silent(PAUSA_MS) + _fala() + AudioSegment.silent(PAUSA_MS))
-    metricas = audio_service.analyze_form(caminho, "algumas palavras")
+    metricas = audio.analyze_form(caminho, "algumas palavras")
 
     assert metricas.pause_count == 0
     assert metricas.total_pause_seconds == 0.0
@@ -57,7 +57,7 @@ def test_ritmo_usa_o_tempo_falado_e_nao_a_duracao(exportar):
     """Contar o silêncio como fala puniria quem pausa — o oposto do que aconteceu."""
     caminho = exportar(_fala() + AudioSegment.silent(PAUSA_MS) + _fala())
     transcript = " ".join(["palavra"] * 10)
-    metricas = audio_service.analyze_form(caminho, transcript)
+    metricas = audio.analyze_form(caminho, transcript)
 
     ritmo_pela_duracao = 10 / metricas.duration_seconds * 60
     ritmo_pela_fala = 10 / metricas.speech_seconds * 60
@@ -71,7 +71,7 @@ def test_ritmo_usa_o_tempo_falado_e_nao_a_duracao(exportar):
 def test_audio_mudo_nao_derruba_as_metricas(exportar):
     """Faixa digitalmente muda não tem volume médio de referência — não pode levantar."""
     caminho = exportar(AudioSegment.silent(3000))
-    metricas = audio_service.analyze_form(caminho, "")
+    metricas = audio.analyze_form(caminho, "")
 
     assert metricas.duration_seconds == pytest.approx(3.0, abs=0.05)
     assert metricas.word_count == 0
@@ -84,13 +84,13 @@ def test_chunks_de_formatos_diferentes_sao_recusados(exportar, tmp_path):
     mp3 = tmp_path / "chunk_001.mp3"
     _fala(500).export(mp3, format="mp3")
 
-    with pytest.raises(audio_service.MixedChunkFormatsError):
-        audio_service.concat_chunks([wav, mp3], tmp_path / "saida.wav")
+    with pytest.raises(audio.MixedChunkFormatsError):
+        audio.concat_chunks([wav, mp3], tmp_path / "saida.wav")
 
 
 def test_chunks_unidos_somam_a_duracao(exportar, tmp_path):
     """A junção decodifica e reexporta: o arquivo final tem UM cabeçalho coerente."""
     chunks = [exportar(_fala(1000), f"chunk_{i:03d}.wav") for i in range(3)]
-    destino = audio_service.concat_chunks(chunks, tmp_path / "audio.wav")
+    destino = audio.concat_chunks(chunks, tmp_path / "audio.wav")
 
-    assert audio_service.get_duration_seconds(destino) == pytest.approx(3.0, abs=0.05)
+    assert audio.get_duration_seconds(destino) == pytest.approx(3.0, abs=0.05)

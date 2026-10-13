@@ -4,8 +4,8 @@ O caso do número trocado reproduz a medição do CLAUDE.md §9: "12 participant
 participantes" num trecho copiado dá `partial_ratio` 96.2 e passava em qualquer limiar.
 """
 
+from app.domain import grounding
 from app.schemas.feedback import GeneratedQuestion
-from app.services import grounding_service
 
 MIN_SCORE = 90
 
@@ -24,14 +24,14 @@ def _pergunta(
 
 
 def test_trecho_honesto_aprova():
-    aprovada, motivo = grounding_service.validar(
+    aprovada, motivo = grounding.validar(
         _pergunta("O estudo contou com 12 participantes em 2024."), SLIDES, MIN_SCORE
     )
     assert aprovada and motivo is None
 
 
 def test_numero_trocado_reprova():
-    aprovada, motivo = grounding_service.validar(
+    aprovada, motivo = grounding.validar(
         _pergunta("O estudo contou com 40 participantes em 2024."), SLIDES, MIN_SCORE
     )
     assert not aprovada
@@ -40,7 +40,7 @@ def test_numero_trocado_reprova():
 
 def test_separador_de_milhar_nao_gera_falso_negativo():
     """O LLM copiar "1.000" como "1000" é diferença cosmética, não alucinação."""
-    aprovada, motivo = grounding_service.validar(
+    aprovada, motivo = grounding.validar(
         _pergunta(
             "Foram investidos 1000 reais no projeto piloto.",
             slide=2,
@@ -53,7 +53,7 @@ def test_separador_de_milhar_nao_gera_falso_negativo():
 
 
 def test_slide_inexistente_reprova():
-    aprovada, motivo = grounding_service.validar(
+    aprovada, motivo = grounding.validar(
         _pergunta("O estudo contou com 12 participantes em 2024.", slide=99),
         SLIDES,
         MIN_SCORE,
@@ -63,7 +63,7 @@ def test_slide_inexistente_reprova():
 
 
 def test_trecho_parafraseado_reprova():
-    aprovada, motivo = grounding_service.validar(
+    aprovada, motivo = grounding.validar(
         _pergunta("A pesquisa envolveu uma dúzia de pessoas voluntárias."),
         SLIDES,
         MIN_SCORE,
@@ -73,7 +73,7 @@ def test_trecho_parafraseado_reprova():
 
 
 def test_pergunta_que_copia_o_slide_reprova():
-    aprovada, motivo = grounding_service.validar(
+    aprovada, motivo = grounding.validar(
         _pergunta(
             "O estudo contou com 12 participantes em 2024.",
             question="O estudo contou com 12 participantes em 2024?",

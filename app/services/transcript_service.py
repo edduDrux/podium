@@ -14,9 +14,9 @@ Este módulo não fala com o banco: recebe os modelos e os altera. Quem chama de
 gravar — e é isso que permite testá-lo sem Postgres.
 """
 
+from app.domain.text import limpar_transcricao
 from app.models.feedback import Feedback
 from app.models.presentation import Presentation
-from app.services.stt_service import limpar_transcricao
 
 # Chave, no JSONB de métricas, que registra de onde veio a transcrição desta sessão.
 # Mora no JSONB existente por não haver coluna própria — criar uma exigiria migration.

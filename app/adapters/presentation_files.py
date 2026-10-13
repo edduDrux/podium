@@ -7,9 +7,9 @@ não precisa saber de qual formato o conteúdo veio.
 
 from pathlib import Path
 
+from app.adapters import pdf, pptx
 from app.core.enums import SourceFileType
 from app.domain import slides
-from app.services import pdf_service, pptx_service
 
 PDF_CONTENT_TYPES = {"application/pdf"}
 PPTX_CONTENT_TYPES = {
@@ -51,14 +51,14 @@ def extension_for(file_type: SourceFileType) -> str:
 
 def is_valid(path: Path | str, file_type: SourceFileType) -> bool:
     if file_type is SourceFileType.PDF:
-        return pdf_service.is_valid_pdf(path)
-    return pptx_service.is_valid_pptx(path)
+        return pdf.is_valid_pdf(path)
+    return pptx.is_valid_pptx(path)
 
 
 def extract_text(path: Path | str, file_type: SourceFileType) -> str:
     if file_type is SourceFileType.PDF:
-        return pdf_service.extract_text(path)
-    return pptx_service.extract_text(path)
+        return pdf.extract_text(path)
+    return pptx.extract_text(path)
 
 
 def has_extractable_text(slides_text: str) -> bool:

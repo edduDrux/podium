@@ -10,13 +10,14 @@ import uuid
 
 import pytest
 
+from app.adapters import audio
 from app.core.enums import PersonaType, PresentationStatus
 from app.domain import slides
-from app.domain.banca import ResultadoGeracao
+from app.domain.panel import ResultadoGeracao
 from app.models.feedback import Feedback
 from app.models.presentation import Presentation
 from app.schemas.feedback import SpeechMetrics
-from app.services import analysis_service, audio_service, transcript_service
+from app.services import analysis_service, transcript_service
 
 SLIDES_TEXT = slides.montar([slides.bloco(1, "A metodologia experimental adotada")])
 
@@ -47,9 +48,9 @@ class BancaFalsa:
 
 @pytest.fixture(autouse=True)
 def audio_dublado(monkeypatch):
-    monkeypatch.setattr(audio_service, "normalize_for_stt", lambda caminho: caminho)
+    monkeypatch.setattr(audio, "normalize_for_stt", lambda caminho: caminho)
     monkeypatch.setattr(
-        audio_service,
+        audio,
         "analyze_form",
         lambda caminho, transcript: SpeechMetrics(
             duration_seconds=60.0, speech_seconds=50.0, word_count=len(transcript.split())

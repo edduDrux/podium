@@ -15,14 +15,15 @@ import uuid
 
 import pytest
 
+from app.adapters import audio
 from app.core.enums import PersonaType, PresentationStatus
 from app.domain import slides
-from app.domain.banca import ResultadoGeracao
+from app.domain.panel import ResultadoGeracao
 from app.domain.ports import BancaExaminadora, Transcritor
 from app.models.feedback import Feedback
 from app.models.presentation import Presentation
 from app.schemas.feedback import GeneratedQuestion, SpeechMetrics
-from app.services import analysis_service, audio_service
+from app.services import analysis_service
 
 SLIDES_TEXT = slides.montar(
     [
@@ -83,9 +84,9 @@ def audio_dublado(monkeypatch):
 
     As métricas de forma têm testes próprios sobre áudio real em `test_audio_service.py`.
     """
-    monkeypatch.setattr(audio_service, "normalize_for_stt", lambda caminho: caminho)
+    monkeypatch.setattr(audio, "normalize_for_stt", lambda caminho: caminho)
     monkeypatch.setattr(
-        audio_service,
+        audio,
         "analyze_form",
         lambda caminho, transcript: SpeechMetrics(
             duration_seconds=60.0,
@@ -177,10 +178,10 @@ async def test_cobertura_sai_mesmo_sem_perguntas(presentation):
         BancaFalsa(vazio),
     )
 
-    cobertura = resposta.slide_coverage
-    assert cobertura.percentual_coberto == 0.0
-    assert cobertura.alerta_descolamento is True
-    assert [slide.numero for slide in cobertura.slides] == [1, 2]
+    coverage = resposta.slide_coverage
+    assert coverage.percentual_coberto == 0.0
+    assert coverage.alerta_descolamento is True
+    assert [slide.numero for slide in coverage.slides] == [1, 2]
 
 
 @pytest.mark.asyncio
@@ -284,7 +285,7 @@ async def test_pipeline_does_not_block_the_event_loop(presentation, monkeypatch)
         time.sleep(0.3)
         return SpeechMetrics()
 
-    monkeypatch.setattr(audio_service, "analyze_form", slow_analyze_form)
+    monkeypatch.setattr(audio, "analyze_form", slow_analyze_form)
     ticks = 0
 
     async def ticker():

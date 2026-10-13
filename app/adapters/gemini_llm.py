@@ -8,11 +8,10 @@ from pydantic import ValidationError
 
 from app.core.config import settings
 from app.core.enums import LLMCallStage, PersonaType
-from app.domain import slides
-from app.domain.banca import ResultadoGeracao
+from app.domain import grounding, slides
+from app.domain.panel import ResultadoGeracao
 from app.domain.ports import Auditoria
 from app.schemas.feedback import GeneratedQuestion
-from app.services import grounding_service
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +147,7 @@ async def _gerar_perguntas(
 ) -> ResultadoGeracao:
     """Monta o prompt (slides + transcrição + persona) e devolve as perguntas ancoradas.
 
-    Só retornam perguntas que passaram pelo `grounding_service`. O prompt pede o
+    Só retornam perguntas que passaram pelo `grounding`. O prompt pede o
     aterramento e a validação o cobra: pedir sem conferir deixaria a garantia por conta
     da boa vontade do modelo.
 
@@ -360,7 +359,7 @@ def _aplicar_aterramento(
     aprovadas: list[GeneratedQuestion] = []
 
     for pergunta in perguntas:
-        aprovada, motivo = grounding_service.validar(
+        aprovada, motivo = grounding.validar(
             pergunta, slides_por_numero, settings.GROUNDING_MIN_SCORE
         )
         if aprovada:

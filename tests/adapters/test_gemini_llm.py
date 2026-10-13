@@ -4,8 +4,8 @@ Cobrem só as funções puras de corte: a chamada ao LLM em si é exercitada com
 quando o `run_pipeline` for testado (Fase 5 do PRD).
 """
 
+from app.adapters.gemini_llm import _limitar_slides, _limitar_transcricao
 from app.domain import slides
-from app.services.llm_service import _limitar_slides, _limitar_transcricao
 
 TRES_SLIDES = slides.montar(
     [

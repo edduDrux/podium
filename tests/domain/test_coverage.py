@@ -5,7 +5,7 @@ sintético reproduz em miniatura o teste obrigatório do CLAUDE.md §14 (slides 
 fala sobre feijoada): o esperado é cobertura perto de zero e alerta de descolamento.
 """
 
-from app.domain import cobertura
+from app.domain import coverage
 
 LIMIARES = {
     "limiar_apresentado": 0.6,
@@ -14,8 +14,8 @@ LIMIARES = {
 }
 
 
-def _avaliar(slides: dict[int, str], transcript: str) -> cobertura.ResultadoCobertura:
-    return cobertura.avaliar(slides, transcript, **LIMIARES)
+def _avaliar(slides: dict[int, str], transcript: str) -> coverage.ResultadoCobertura:
+    return coverage.avaliar(slides, transcript, **LIMIARES)
 
 
 def test_slide_falado_por_inteiro_e_apresentado():
@@ -25,7 +25,7 @@ def test_slide_falado_por_inteiro_e_apresentado():
     )
     avaliacao = resultado.slides[0]
 
-    assert avaliacao.classificacao == cobertura.APRESENTADO
+    assert avaliacao.classificacao == coverage.APRESENTADO
     assert avaliacao.score == 1.0
     assert avaliacao.termos_ausentes == []
     assert resultado.alerta_descolamento is False
@@ -38,7 +38,7 @@ def test_slide_ignorado_e_nao_apresentado_com_evidencia():
     )
     avaliacao = resultado.slides[0]
 
-    assert avaliacao.classificacao == cobertura.NAO_APRESENTADO
+    assert avaliacao.classificacao == coverage.NAO_APRESENTADO
     assert avaliacao.score == 0.0
     # A evidência auditável: exatamente o que estava lá e não foi dito.
     assert avaliacao.termos_ausentes == ["adaptadores", "arquitetura", "hexagonal"]
@@ -51,7 +51,7 @@ def test_slide_metade_falado_e_parcial():
     )
     avaliacao = resultado.slides[0]
 
-    assert avaliacao.classificacao == cobertura.PARCIAL
+    assert avaliacao.classificacao == coverage.PARCIAL
     assert avaliacao.termos_presentes == 2
     assert avaliacao.termos_totais == 4
 
@@ -72,7 +72,7 @@ def test_adversarial_material_e_fala_descolados():
     assert resultado.percentual_coberto == 0.0
     assert resultado.alerta_descolamento is True
     assert all(
-        avaliacao.classificacao == cobertura.NAO_APRESENTADO for avaliacao in resultado.slides
+        avaliacao.classificacao == coverage.NAO_APRESENTADO for avaliacao in resultado.slides
     )
 
 
@@ -112,7 +112,7 @@ def test_slide_sem_termos_nao_e_acusado():
     resultado = _avaliar({1: "de a o em"}, "qualquer fala")
     avaliacao = resultado.slides[0]
 
-    assert avaliacao.classificacao == cobertura.SEM_TERMOS
+    assert avaliacao.classificacao == coverage.SEM_TERMOS
     assert avaliacao.score is None
 
 

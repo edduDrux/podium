@@ -13,7 +13,7 @@ Roda DENTRO do container, onde o FFmpeg está instalado:
 import sys
 from pathlib import Path
 
-from app.services import audio_service
+from app.adapters import audio
 
 
 def main() -> int:
@@ -30,7 +30,7 @@ def main() -> int:
     if len(sys.argv) == 3:
         transcript = Path(sys.argv[2]).read_text(encoding="utf-8")
 
-    metricas = audio_service.analyze_form(caminho, transcript)
+    metricas = audio.analyze_form(caminho, transcript)
 
     print(f"duração        : {metricas.duration_seconds} s")
     print(f"tempo de fala  : {metricas.speech_seconds} s (duração menos as pausas)")

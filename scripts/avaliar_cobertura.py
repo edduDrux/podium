@@ -14,9 +14,9 @@ Roda DENTRO do container:
 import sys
 from pathlib import Path
 
+from app.adapters import presentation_files
 from app.core.config import settings
-from app.domain import cobertura, slides
-from app.services import slides_service
+from app.domain import coverage, slides
 
 
 def main() -> int:
@@ -31,17 +31,17 @@ def main() -> int:
             print(f"Arquivo não encontrado: {arquivo}")
             return 2
 
-    file_type = slides_service.detect_type(caminho.name, content_type=None)
+    file_type = presentation_files.detect_type(caminho.name, content_type=None)
     if file_type is None:
         print(f"Formato não suportado: {caminho.suffix} (apenas .pdf e .pptx).")
         return 2
 
-    texto = slides_service.extract_text(caminho, file_type)
+    texto = presentation_files.extract_text(caminho, file_type)
     transcript = transcricao_path.read_text(encoding="utf-8")
 
     # Os mesmos limiares que o pipeline usa (config.py), para o resultado daqui ser
     # comparável ao de uma sessão real.
-    resultado = cobertura.avaliar(
+    resultado = coverage.avaliar(
         slides.parse(texto),
         transcript,
         limiar_apresentado=settings.COVERAGE_FULL_THRESHOLD,

@@ -8,7 +8,7 @@ from app.domain import slides
 def extract_text(pptx_path: Path | str) -> str:
     """Extrai o texto limpo de todos os slides do PPTx enviado pelo Cliente VR.
 
-    Usa o mesmo contrato do `pdf_service` (`app.domain.slides`), para que o prompt do LLM
+    Usa o mesmo contrato do `pdf` (`app.domain.slides`), para que o prompt do LLM
     e o aterramento não precisem saber de qual formato o texto veio.
     """
     presentation = PptxPresentation(str(pptx_path))

@@ -7,12 +7,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import CursorResult, update
 
+from app.adapters import storage
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, engine
 from app.core.enums import PresentationStatus
 from app.models.presentation import Presentation
-from app.services import storage_service
 
 logging.basicConfig(level=logging.DEBUG if settings.DEBUG else logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ async def _storage_janitor() -> None:
         try:
             # Varrer e apagar pastas é I/O de disco síncrono: numa thread, para não
             # congelar as requisições a cada limpeza.
-            removed = await asyncio.to_thread(storage_service.purge_expired)
+            removed = await asyncio.to_thread(storage.purge_expired)
             if removed:
                 logger.info("Limpeza: %d pasta(s) de sessão removida(s).", removed)
         except Exception:
