@@ -13,7 +13,7 @@ from app.models.presentation import Presentation
 from tests.api.conftest import make_pdf
 
 URL = "/api/v1/presentations/init"
-FORM = {"persona": "professor_rigoroso"}
+FORM = {"persona": "strict_professor"}
 
 
 def _upload(name: str, content: bytes, content_type: str = "application/pdf") -> dict:

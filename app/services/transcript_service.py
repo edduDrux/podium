@@ -20,10 +20,10 @@ from app.models.presentation import Presentation
 
 # Chave, no JSONB de métricas, que registra de onde veio a transcrição desta sessão.
 # Mora no JSONB existente por não haver coluna própria — criar uma exigiria migration.
-TRANSCRIPT_KEY = "transcricao"
+TRANSCRIPT_KEY = "transcript_source"
 
-ORIGIN_VR_CLIENT = "cliente_vr"
-ORIGIN_SERVER = "servidor"
+ORIGIN_VR_CLIENT = "vr_client"
+ORIGIN_SERVER = "server"
 
 
 class EmptyTranscriptError(ValueError):
@@ -60,7 +60,7 @@ def register(presentation: Presentation, text: str, engine: str | None) -> Feedb
 
 def describe(origin: str, engine: str | None) -> dict[str, str | None]:
     """Formato único do registro de origem, para o pipeline e para a resposta."""
-    return {"origem": origin, "motor": (engine or "").strip() or None}
+    return {"origin": origin, "engine": (engine or "").strip() or None}
 
 
 def recorded_origin(feedback: Feedback | None) -> dict[str, str | None] | None:
@@ -68,14 +68,14 @@ def recorded_origin(feedback: Feedback | None) -> dict[str, str | None] | None:
     if feedback is None:
         return None
     data = (feedback.metrics or {}).get(TRANSCRIPT_KEY)
-    if not isinstance(data, dict) or not data.get("origem"):
+    if not isinstance(data, dict) or not data.get("origin"):
         return None
-    return {"origem": str(data["origem"]), "motor": data.get("motor")}
+    return {"origin": str(data["origin"]), "engine": data.get("engine")}
 
 
 def label(origin: dict[str, str | None] | None) -> str | None:
-    """Texto curto para o contrato da API: `cliente_vr (whisper base)` ou `servidor`."""
+    """Texto curto para o contrato da API: `vr_client (whisper base)` ou `server`."""
     if origin is None:
         return None
-    engine = origin.get("motor")
-    return f"{origin['origem']} ({engine})" if engine else origin["origem"]
+    engine = origin.get("engine")
+    return f"{origin['origin']} ({engine})" if engine else origin["origin"]

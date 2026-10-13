@@ -32,12 +32,12 @@ logger = logging.getLogger(__name__)
 # As contagens do aterramento não são métrica de FORMA, mas moram no mesmo JSONB por
 # não existir coluna própria para elas — criar uma exigiria migration. A chave é separada
 # para que `DeliveryMetricsResponse` continue representando só o que vem do áudio.
-GROUNDING_KEY = "aterramento"
+GROUNDING_KEY = "grounding"
 # Mesmo racional para os flags de truncamento de contexto: chave própria no JSONB
 # existente, sem migration e sem contaminar as métricas de áudio.
-CONTEXT_KEY = "contexto"
+CONTEXT_KEY = "context"
 # E para a cobertura de slides: o relatório inteiro mora na sua chave do JSONB.
-COVERAGE_KEY = "cobertura"
+COVERAGE_KEY = "slide_coverage"
 
 NO_GROUNDED_QUESTIONS = (
     "Nenhuma das perguntas formuladas pôde ser ancorada em um trecho literal dos slides, "
@@ -156,12 +156,12 @@ async def run_pipeline(
         feedback.metrics = {
             **delivery_metrics.model_dump(),
             GROUNDING_KEY: {
-                "perguntas_geradas": generation.questions_generated,
-                "perguntas_aprovadas": generation.questions_approved,
+                "questions_generated": generation.questions_generated,
+                "questions_approved": generation.questions_approved,
             },
             CONTEXT_KEY: {
-                "slides_truncados": generation.slides_truncated,
-                "transcricao_truncada": generation.transcript_truncated,
+                "slides_truncated": generation.slides_truncated,
+                "transcript_truncated": generation.transcript_truncated,
             },
             COVERAGE_KEY: coverage.model_dump(),
             transcript_service.TRANSCRIPT_KEY: origin,
@@ -280,12 +280,12 @@ def to_response(presentation: Presentation) -> FeedbackResponse:
         else DeliveryMetricsResponse(),
         # Feedback gravado antes da camada de aterramento não tem as contagens; nesse caso
         # o que existe no banco já são as perguntas efetivamente entregues.
-        questions_generated=grounding_counts.get("perguntas_geradas", len(questions)),
-        questions_approved=grounding_counts.get("perguntas_aprovadas", len(questions)),
+        questions_generated=grounding_counts.get("questions_generated", len(questions)),
+        questions_approved=grounding_counts.get("questions_approved", len(questions)),
         # Feedback anterior a este flag não declarou truncamento; False é o registro
         # honesto do que se sabe dele.
-        slides_truncated=context.get("slides_truncados", False),
-        transcript_truncated=context.get("transcricao_truncada", False),
+        slides_truncated=context.get("slides_truncated", False),
+        transcript_truncated=context.get("transcript_truncated", False),
         slide_coverage=_stored_coverage(stored_coverage, presentation.id),
         transcript_source=transcript_service.label(transcript_service.recorded_origin(feedback)),
     )

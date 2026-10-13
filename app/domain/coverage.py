@@ -47,12 +47,12 @@ STOPWORDS = frozenset(
 MIN_SLIDES_FOR_PURGE = 4
 STRUCTURAL_FRACTION = 0.8
 
-PRESENTED = "apresentado"
-PARTIAL = "parcial"
-NOT_PRESENTED = "nao_apresentado"
+PRESENTED = "presented"
+PARTIAL = "partial"
+NOT_PRESENTED = "not_presented"
 # Slide cujos termos foram todos filtrados (só imagem, só stopword, só estrutura):
 # não há o que medir, e fingir 0% o acusaria de não apresentado sem evidência.
-NO_TERMS = "sem_termos"
+NO_TERMS = "no_terms"
 
 
 class SlideCoverage(NamedTuple):

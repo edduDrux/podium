@@ -35,7 +35,7 @@ def test_changed_number_is_rejected():
         _question("O estudo contou com 40 participantes em 2024."), SLIDES, MIN_SCORE
     )
     assert not is_approved
-    assert reason == "NUMERO_NAO_ENCONTRADO"
+    assert reason == "NUMBER_NOT_FOUND"
 
 
 def test_thousands_separator_is_not_a_false_negative():
@@ -59,7 +59,7 @@ def test_unknown_slide_is_rejected():
         MIN_SCORE,
     )
     assert not is_approved
-    assert reason == "SLIDE_INEXISTENTE"
+    assert reason == "UNKNOWN_SLIDE"
 
 
 def test_paraphrased_quote_is_rejected():
@@ -69,7 +69,7 @@ def test_paraphrased_quote_is_rejected():
         MIN_SCORE,
     )
     assert not is_approved
-    assert reason == "TRECHO_NAO_LITERAL"
+    assert reason == "QUOTE_NOT_LITERAL"
 
 
 def test_question_that_copies_the_slide_is_rejected():
@@ -82,4 +82,4 @@ def test_question_that_copies_the_slide_is_rejected():
         MIN_SCORE,
     )
     assert not is_approved
-    assert reason == "PERGUNTA_TRIVIAL"
+    assert reason == "TRIVIAL_QUESTION"

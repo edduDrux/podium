@@ -29,7 +29,7 @@ class SlideCoverageResponse(BaseModel):
     """Veredicto de cobertura de UM slide, com a evidência que o sustenta."""
 
     slide_number: int
-    # apresentado | parcial | nao_apresentado | sem_termos
+    # presented | partial | not_presented | no_terms
     classification: str
     # None quando o slide não tem termos mensuráveis (sem_termos).
     score: float | None = None
@@ -99,8 +99,8 @@ class FeedbackResponse(BaseModel):
     # medição zerada.
     slide_coverage: CoverageReportResponse | None = None
 
-    # Quem produziu a transcrição: `servidor (gemini-3.5-flash)` quando o STT rodou aqui,
-    # `cliente_vr (whisper.cpp ...)` quando o headset a entregou pronta. Importa para o
+    # Quem produziu a transcrição: `server (gemini-3.5-flash)` quando o STT rodou aqui,
+    # `vr_client (whisper.cpp ...)` quando o headset a entregou pronta. Importa para o
     # relatório — as duas fontes têm acurácia e latência diferentes — e para depurar uma
     # sessão em que a banca perguntou sobre algo que não foi dito. None em feedback
     # anterior a este registro.

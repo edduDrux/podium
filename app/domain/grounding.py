@@ -54,13 +54,13 @@ def validate(
     """
     content = slides.get(question.slide_number)
     if content is None:
-        return False, "SLIDE_INEXISTENTE"
+        return False, "UNKNOWN_SLIDE"
 
     normalized_content = _normalize(content)
 
     quote_score = fuzz.partial_ratio(_normalize(question.quote), normalized_content)
     if quote_score < min_score:
-        return False, "TRECHO_NAO_LITERAL"
+        return False, "QUOTE_NOT_LITERAL"
 
     # Checagem à parte do score difuso, porque o score não enxerga dígito: trocar
     # "12 participantes" por "40 participantes" num trecho copiado dá `partial_ratio`
@@ -68,10 +68,10 @@ def validate(
     # perigoso diante de uma banca — a checagem é conjuntiva: o trecho precisa passar no
     # difuso E cada número dele precisa existir literalmente no slide de origem.
     if _numbers(question.quote) - _numbers(content):
-        return False, "NUMERO_NAO_ENCONTRADO"
+        return False, "NUMBER_NOT_FOUND"
 
     question_score = fuzz.partial_ratio(_normalize(question.question), normalized_content)
     if question_score >= MAX_QUESTION_SIMILARITY:
-        return False, "PERGUNTA_TRIVIAL"
+        return False, "TRIVIAL_QUESTION"
 
     return True, None

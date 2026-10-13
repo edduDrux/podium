@@ -4,7 +4,7 @@ from enum import StrEnum
 class ScenarioType(StrEnum):
     """Cenários VR disponíveis. O MVP entrega apenas a Sala de Aula."""
 
-    CLASSROOM = "sala_de_aula"
+    CLASSROOM = "classroom"
 
 
 class PersonaType(StrEnum):
@@ -15,9 +15,9 @@ class PersonaType(StrEnum):
     `f4b1c9d2e370`). Reduzir o escopo é reduzir o que se promete ter medido.
     """
 
-    STRICT_PROFESSOR = "professor_rigoroso"
-    SUPPORTIVE_ADVISOR = "orientador_acolhedor"
-    TECHNICAL_EXPERT = "especialista_tecnico"
+    STRICT_PROFESSOR = "strict_professor"
+    SUPPORTIVE_ADVISOR = "supportive_advisor"
+    TECHNICAL_EXPERT = "technical_expert"
 
 
 class SourceFileType(StrEnum):
@@ -35,7 +35,7 @@ class LLMCallStage(StrEnum):
     """
 
     STT = "stt"
-    QUESTION_GENERATION = "geracao_perguntas"
+    QUESTION_GENERATION = "question_generation"
 
 
 class PresentationStatus(StrEnum):
