@@ -50,3 +50,29 @@ jobs:
       # deixam o pipeline inteiro rodar com dublês. Por isso não há serviço de banco aqui.
       - name: Testes
         run: pytest tests/ -v
+
+  # A imagem é montada do zero a cada push: pega Dockerfile quebrado e dependência que
+  # não instala — o tipo de defasagem que deixou a API local fora do ar por 36 h com uma
+  # imagem antiga (DECISOES §11).
+  imagem:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Emulação para montar a imagem ARM64 num runner x86.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Montar a imagem (amd64)
+        run: docker buildx build --platform linux/amd64 --load -t podium-api:ci .
+
+      # Teste de fumaça: a aplicação importa dentro da imagem, com as dependências que a
+      # imagem de fato instalou.
+      - name: Importar a aplicação na imagem
+        run: docker run --rm podium-api:ci python -c "import app.main"
+
+      # A VM da Oracle é ARM64 (CLAUDE.md §5). Montar para aarch64 prova que toda
+      # dependência tem wheel para essa arquitetura — a imagem não tem compilador.
+      - name: Montar a imagem (arm64)
+        run: docker buildx build --platform linux/arm64 .
