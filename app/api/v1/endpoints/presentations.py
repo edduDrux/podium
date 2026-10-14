@@ -15,6 +15,7 @@ from fastapi import (
     Body,
     File,
     Form,
+    Path,
     Query,
     Response,
     UploadFile,
@@ -24,10 +25,25 @@ from fastapi.concurrency import run_in_threadpool
 
 from app.adapters import slide_renderer
 from app.api.deps import CurrentPresentation, DbSession
+from app.api.errors import documented
 from app.core.config import settings
 from app.core.enums import AnalysisMode, PersonaType, PresentationStatus, ScenarioType
 from app.domain import session_lifecycle
-from app.domain.errors import NotRenderableError
+from app.domain.errors import (
+    ActionNotAllowedError,
+    AudioTooLongError,
+    EmptyTranscriptError,
+    FileTooLargeError,
+    MixedChunkFormatsError,
+    NoAudioError,
+    NoExtractableTextError,
+    NoSpeechError,
+    NotRenderableError,
+    PageNotFoundError,
+    UndecodableAudioError,
+    UnreadableFileError,
+    UnsupportedFileTypeError,
+)
 from app.domain.session_lifecycle import Action
 from app.schemas.feedback import FeedbackResponse
 from app.schemas.presentation import (
@@ -47,9 +63,15 @@ router = APIRouter(prefix="/presentations", tags=["presentations"])
 
 @router.post(
     "/init",
-    response_model=PresentationInitResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Cria uma sessão de apresentação e ingere o PDF",
+    responses=documented(
+        UnsupportedFileTypeError,
+        FileTooLargeError,
+        UnreadableFileError,
+        NoExtractableTextError,
+        session=False,
+    ),
 )
 async def init_presentation(
     db: DbSession,
@@ -72,8 +94,8 @@ async def init_presentation(
 
 @router.post(
     "/{session_id}/audio",
-    response_model=AudioUploadResponse,
     summary="Recebe o áudio (ou chunks) capturado no VR",
+    responses=documented(ActionNotAllowedError, MixedChunkFormatsError, AudioTooLongError),
 )
 async def upload_audio(
     db: DbSession,
@@ -94,9 +116,16 @@ async def upload_audio(
 
 @router.post(
     "/{session_id}/analyze",
-    response_model=AnalysisAcceptedResponse,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Dispara o Feedback Duplo em segundo plano (STT + métricas + perguntas)",
+    responses=documented(
+        ActionNotAllowedError,
+        NoAudioError,
+        NoSpeechError,
+        MixedChunkFormatsError,
+        AudioTooLongError,
+        UndecodableAudioError,
+    ),
 )
 async def analyze_presentation(
     db: DbSession,
@@ -128,8 +157,8 @@ async def analyze_presentation(
 
 @router.put(
     "/{session_id}/transcript",
-    response_model=TranscriptAcceptedResponse,
     summary="Recebe a transcrição feita no próprio Cliente VR",
+    responses=documented(ActionNotAllowedError, EmptyTranscriptError),
 )
 async def submit_transcript(
     db: DbSession,
@@ -154,8 +183,8 @@ async def submit_transcript(
 
 @router.get(
     "/{session_id}/slides",
-    response_model=SlidesInfoResponse,
     summary="Quantas páginas da apresentação o servidor consegue desenhar",
+    responses=documented(),
 )
 async def get_slides_info(presentation: CurrentPresentation) -> SlidesInfoResponse:
     """Metadados para a tela da sala: o Cliente VR decide daqui quantas imagens pedir."""
@@ -178,11 +207,17 @@ async def get_slides_info(presentation: CurrentPresentation) -> SlidesInfoRespon
     "/{session_id}/slides/{number}",
     summary="Uma página da apresentação em PNG, para a tela da sala",
     response_class=Response,
-    responses={200: {"content": {"image/png": {}}}},
+    responses={
+        200: {"content": {"image/png": {}}},
+        **documented(NotRenderableError, PageNotFoundError),
+    },
 )
 async def get_slide_image(
     presentation: CurrentPresentation,
-    number: int,
+    number: Annotated[
+        int,
+        Path(ge=1, description="Página, base 1: a mesma numeração do [Slide N]."),
+    ],
     width: Annotated[
         int | None,
         Query(description="Largura em pixels; a altura segue a proporção da página."),
@@ -210,8 +245,8 @@ async def get_slide_image(
 
 @router.get(
     "/{session_id}",
-    response_model=PresentationResponse,
     summary="Consulta o status da sessão",
+    responses=documented(),
 )
 async def get_presentation(presentation: CurrentPresentation) -> PresentationResponse:
     return PresentationResponse.model_validate(presentation)
@@ -219,8 +254,8 @@ async def get_presentation(presentation: CurrentPresentation) -> PresentationRes
 
 @router.get(
     "/{session_id}/feedback",
-    response_model=FeedbackResponse,
     summary="Recupera o Feedback Duplo já processado",
+    responses=documented(ActionNotAllowedError),
 )
 async def get_feedback(presentation: CurrentPresentation) -> FeedbackResponse:
     """Devolve o Feedback Duplo de uma análise concluída.
