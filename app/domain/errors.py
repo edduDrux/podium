@@ -73,3 +73,14 @@ class EmptyTranscriptError(DomainError):
     respondeu"), então aceitar só criaria a ilusão de que o STT seria pulado. Recusar na
     entrada diz ao cliente, na hora, que o texto não serviu.
     """
+
+
+# --- Tela da sala (slides em PNG) ---------------------------------------------------------
+
+
+class NotRenderableError(DomainError):
+    """O servidor só desenha PDF: o python-pptx lê texto, mas não desenha slides."""
+
+
+class PageNotFoundError(DomainError):
+    """Pediram uma página fora da apresentação."""

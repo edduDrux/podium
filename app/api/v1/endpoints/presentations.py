@@ -15,7 +15,6 @@ from fastapi import (
     Body,
     File,
     Form,
-    HTTPException,
     Query,
     Response,
     UploadFile,
@@ -28,6 +27,7 @@ from app.api.deps import CurrentPresentation, DbSession
 from app.core.config import settings
 from app.core.enums import AnalysisMode, PersonaType, PresentationStatus, ScenarioType
 from app.domain import session_lifecycle
+from app.domain.errors import NotRenderableError
 from app.domain.session_lifecycle import Action
 from app.schemas.feedback import FeedbackResponse
 from app.schemas.presentation import (
@@ -195,16 +195,10 @@ async def get_slide_image(
     gerou a pergunta sem tabela de conversão nenhuma.
     """
     if not slide_renderer.is_renderable(presentation):
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=slide_renderer.unrenderable_reason(presentation),
-        )
+        raise NotRenderableError(slide_renderer.PPTX_REASON)
 
     width_px = slide_renderer.clamp_width(width)
-    try:
-        image = await run_in_threadpool(slide_renderer.cached_page, presentation, number, width_px)
-    except slide_renderer.PageNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    image = await run_in_threadpool(slide_renderer.cached_page, presentation, number, width_px)
 
     return Response(
         content=image,

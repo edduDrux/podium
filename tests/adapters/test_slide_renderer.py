@@ -11,6 +11,7 @@ import pytest
 from app.adapters import slide_renderer
 from app.core.config import settings
 from app.core.enums import PersonaType, SourceFileType
+from app.domain.errors import PageNotFoundError
 from app.models.presentation import Presentation
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
@@ -62,7 +63,7 @@ def test_renders_png_at_requested_width_keeping_aspect_ratio(pdf):
 
 @pytest.mark.parametrize("number", [0, 4])
 def test_page_outside_the_deck(pdf, number):
-    with pytest.raises(slide_renderer.PageNotFoundError):
+    with pytest.raises(PageNotFoundError):
         slide_renderer.render_page(pdf, number, 400)
 
 

@@ -18,6 +18,8 @@ from app.domain.errors import (
     NoAudioError,
     NoExtractableTextError,
     NoSpeechError,
+    NotRenderableError,
+    PageNotFoundError,
     UndecodableAudioError,
     UnreadableFileError,
     UnsupportedFileTypeError,
@@ -29,11 +31,14 @@ STATUS_BY_ERROR: dict[type[DomainError], int] = {
     NoAudioError: status.HTTP_409_CONFLICT,
     NoSpeechError: status.HTTP_409_CONFLICT,
     MixedChunkFormatsError: status.HTTP_409_CONFLICT,
+    # 404: a sessão existe, a página pedida não.
+    PageNotFoundError: status.HTTP_404_NOT_FOUND,
     # 413: grande demais — em bytes ou em minutos.
     FileTooLargeError: status.HTTP_413_CONTENT_TOO_LARGE,
     AudioTooLongError: status.HTTP_413_CONTENT_TOO_LARGE,
     # 415: formato que o servidor não aceita.
     UnsupportedFileTypeError: status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+    NotRenderableError: status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
     # 422: o formato é aceito, mas o conteúdo não serve.
     UnreadableFileError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     NoExtractableTextError: status.HTTP_422_UNPROCESSABLE_CONTENT,

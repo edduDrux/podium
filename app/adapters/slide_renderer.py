@@ -17,6 +17,7 @@ import fitz  # PyMuPDF
 
 from app.adapters import storage
 from app.core.enums import SourceFileType
+from app.domain.errors import PageNotFoundError
 from app.models.presentation import Presentation
 
 logger = logging.getLogger(__name__)
@@ -30,10 +31,6 @@ PPTX_REASON = (
     "O servidor renderiza apenas PDF. Exporte a apresentação como PDF para vê-la na "
     "tela da sala; a análise de conteúdo funciona com os dois formatos."
 )
-
-
-class PageNotFoundError(LookupError):
-    """Pediram uma página fora da apresentação."""
 
 
 def is_renderable(presentation: Presentation) -> bool:
