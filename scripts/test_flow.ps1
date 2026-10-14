@@ -7,12 +7,19 @@
 
 .EXAMPLE
     .\scripts\test_flow.ps1 -Presentation "C:\meu_tcc.pdf" -Audio "C:\minha_fala.m4a" -Persona technical_expert
+
+.EXAMPLE
+    # Analise basica: so a fala, sem slides no prompt e sem cobertura. Rodar a mesma
+    # sessao nos dois modos e o que mede a diferenca de tempo entre eles.
+    .\scripts\test_flow.ps1 -Presentation "C:\meu_tcc.pdf" -Audio "C:\minha_fala.m4a" -AnalysisMode basic
 #>
 param(
     [Parameter(Mandatory = $true)][string]$Presentation,
     [Parameter(Mandatory = $true)][string]$Audio,
     [ValidateSet('strict_professor', 'supportive_advisor', 'technical_expert')]
     [string]$Persona = 'strict_professor',
+    [ValidateSet('full', 'basic')]
+    [string]$AnalysisMode = 'full',
     [string]$BaseUrl = 'http://localhost:8000/api/v1',
     [int]$TimeoutSeconds = 600
 )
@@ -21,11 +28,14 @@ $ErrorActionPreference = 'Stop'
 
 # curl.exe escreve UTF-8; lemos sempre de arquivo para o console nao corromper acentos.
 $tmp = Join-Path $env:TEMP "podium_$([guid]::NewGuid()).json"
+# O corpo do /analyze vai por arquivo: aspas dentro de argumento de curl.exe se perdem
+# no Windows PowerShell 5.1.
+$analyzeBody = Join-Path $env:TEMP "podium_body_$([guid]::NewGuid()).json"
 
 # O temporario tem que sumir mesmo quando o script aborta no meio — e agora ele aborta,
 # porque as chamadas passaram a falhar alto. `trap` cobre isso sem exigir que o corpo
 # inteiro do script viva dentro de um try/finally.
-trap { Remove-Item $tmp -Force -ErrorAction SilentlyContinue; break }
+trap { Remove-Item $tmp, $analyzeBody -Force -ErrorAction SilentlyContinue; break }
 
 function Invoke-Podium {
     <#
@@ -65,6 +75,7 @@ Write-Host "PODIUM - teste de fluxo completo" -ForegroundColor Cyan
 Write-Host "  apresentacao: $presentationPath"
 Write-Host "  audio       : $audioPath"
 Write-Host "  persona     : $Persona"
+Write-Host "  analise     : $AnalysisMode"
 Write-Host ""
 
 # --- 1. Cria a sessao e envia a apresentacao -------------------------------
@@ -94,8 +105,12 @@ Write-Host "      recebido: $($upload.received_bytes) bytes  |  duracao: $durati
 
 # --- 3. Dispara a analise (assincrona) -------------------------------------
 Write-Host "[3/4] Disparando a analise (resposta imediata, processa em 2o plano)..." -ForegroundColor Yellow
+@{ analysis_mode = $AnalysisMode } | ConvertTo-Json -Compress |
+    Set-Content -Path $analyzeBody -Encoding ascii
 $analysis = Invoke-Podium -Step 'Disparo da analise (/analyze)' -CurlArgs @(
-    '-X', 'POST', "$BaseUrl/presentations/$sessionId/analyze"
+    '-X', 'POST', "$BaseUrl/presentations/$sessionId/analyze",
+    '-H', 'Content-Type: application/json',
+    '--data-binary', "@$analyzeBody"
 )
 Write-Host "      status  : $($analysis.status)"
 
@@ -116,7 +131,7 @@ do {
 if ($session.status -eq 'failed') {
     Write-Host ""
     Write-Host "FALHOU: $($session.error_message)" -ForegroundColor Red
-    Remove-Item $tmp -ErrorAction SilentlyContinue
+    Remove-Item $tmp, $analyzeBody -ErrorAction SilentlyContinue
     exit 1
 }
 
@@ -131,6 +146,11 @@ Write-Host $fb.transcript
 Write-Host ""
 Write-Host "=== FORMA (metricas vocais) ===" -ForegroundColor Green
 $m = $fb.delivery_metrics
+if (-not $m) {
+    # Analise basica sem audio: as metricas de forma nao existem, e a API diz por que.
+    Write-Host "  $($fb.delivery_metrics_reason)" -ForegroundColor Yellow
+    $m = [pscustomobject]@{}
+}
 # `speech_seconds` aparece junto do ritmo porque e o divisor dele: o wpm e calculado
 # sobre o tempo de fala, nao sobre a duracao do arquivo, e sem os dois o numero nao e
 # interpretavel.
@@ -165,7 +185,9 @@ foreach ($q in $fb.questions) {
     # quebra do slide original, e imprimi-la crua desalinha o bloco. O valor comparado
     # pelo aterramento e o do JSON, nao este.
     $evidence = ($q.quote -replace '\s*\r?\n\s*', ' ')
-    Write-Host ("     evidencia [slide {0}]: {1}" -f $q.slide_number, $evidence) -ForegroundColor DarkGray
+    # A origem diz contra o que o trecho foi conferido: um slide ou a fala transcrita.
+    $origin = if ($q.source -eq 'speech') { 'fala' } else { "slide $($q.slide_number)" }
+    Write-Host ("     evidencia [{0}]: {1}" -f $origin, $evidence) -ForegroundColor DarkGray
     if ($q.rationale) { Write-Host ("     motivo: {0}" -f $q.rationale) -ForegroundColor DarkGray }
     Write-Host ""
     $i++
@@ -175,4 +197,4 @@ Write-Host $fb.content_analysis
 Write-Host ""
 Write-Host "Sessao: $sessionId" -ForegroundColor DarkGray
 
-Remove-Item $tmp -ErrorAction SilentlyContinue
+Remove-Item $tmp, $analyzeBody -ErrorAction SilentlyContinue
