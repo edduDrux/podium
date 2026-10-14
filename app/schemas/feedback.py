@@ -3,7 +3,7 @@ import uuid
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from app.core.enums import AnalysisMode
-from app.domain.coverage import CoverageResult
+from app.domain.coverage import CoverageClassification, CoverageResult
 from app.domain.delivery import DeliveryMetrics
 from app.domain.panel import Question, QuestionSource
 
@@ -55,8 +55,7 @@ class SlideCoverageResponse(BaseModel):
     """Veredicto de cobertura de UM slide, com a evidência que o sustenta."""
 
     slide_number: int
-    # presented | partial | not_presented | no_terms
-    classification: str
+    classification: CoverageClassification
     # None quando o slide não tem termos mensuráveis (sem_termos).
     score: float | None = None
     total_terms: int = 0

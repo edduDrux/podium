@@ -20,6 +20,7 @@ Ninguém fala o slide palavra por palavra. Por isso os limiares de classificaç�
 baixos e configuráveis, e a plural simples é tolerada ("metodologia" ≡ "metodologias").
 """
 
+from enum import StrEnum
 from typing import NamedTuple
 
 from app.domain.text import normalize
@@ -47,19 +48,23 @@ STOPWORDS = frozenset(
 MIN_SLIDES_FOR_PURGE = 4
 STRUCTURAL_FRACTION = 0.8
 
-PRESENTED = "presented"
-PARTIAL = "partial"
-NOT_PRESENTED = "not_presented"
-# Slide cujos termos foram todos filtrados (só imagem, só stopword, só estrutura):
-# não há o que medir, e fingir 0% o acusaria de não apresentado sem evidência.
-NO_TERMS = "no_terms"
+
+class CoverageClassification(StrEnum):
+    """O veredicto de um slide: quanto do que ele trazia apareceu na fala."""
+
+    PRESENTED = "presented"
+    PARTIAL = "partial"
+    NOT_PRESENTED = "not_presented"
+    # Slide cujos termos foram todos filtrados (só imagem, só stopword, só estrutura):
+    # não há o que medir, e fingir 0% o acusaria de não apresentado sem evidência.
+    NO_TERMS = "no_terms"
 
 
 class SlideCoverage(NamedTuple):
     """O veredicto de um slide, com a evidência que o sustenta."""
 
     slide_number: int
-    classification: str
+    classification: CoverageClassification
     # None quando não há termos mensuráveis (SEM_TERMOS).
     score: float | None
     total_terms: int
@@ -103,7 +108,7 @@ def evaluate(
 
     for number, terms in terms_by_slide.items():
         if not terms:
-            verdicts.append(SlideCoverage(number, NO_TERMS, None, 0, 0, []))
+            verdicts.append(SlideCoverage(number, CoverageClassification.NO_TERMS, None, 0, 0, []))
             continue
 
         missing = sorted(term for term, canonical in terms.items() if canonical not in spoken)
@@ -181,9 +186,11 @@ def _purge_structural(terms_by_slide: dict[int, dict[str, str]]) -> None:
             del terms[term]
 
 
-def _classify(score: float, presented_threshold: float, partial_threshold: float) -> str:
+def _classify(
+    score: float, presented_threshold: float, partial_threshold: float
+) -> CoverageClassification:
     if score >= presented_threshold:
-        return PRESENTED
+        return CoverageClassification.PRESENTED
     if score >= partial_threshold:
-        return PARTIAL
-    return NOT_PRESENTED
+        return CoverageClassification.PARTIAL
+    return CoverageClassification.NOT_PRESENTED

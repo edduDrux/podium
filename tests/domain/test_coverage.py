@@ -6,6 +6,7 @@ fala sobre feijoada): o esperado é cobertura perto de zero e alerta de descolam
 """
 
 from app.domain import coverage
+from app.domain.coverage import CoverageClassification
 
 THRESHOLDS = {
     "presented_threshold": 0.6,
@@ -25,7 +26,7 @@ def test_fully_spoken_slide_is_presented():
     )
     verdict = result.slides[0]
 
-    assert verdict.classification == coverage.PRESENTED
+    assert verdict.classification == CoverageClassification.PRESENTED
     assert verdict.score == 1.0
     assert verdict.missing_terms == []
     assert result.mismatch_alert is False
@@ -38,7 +39,7 @@ def test_ignored_slide_is_not_presented_with_evidence():
     )
     verdict = result.slides[0]
 
-    assert verdict.classification == coverage.NOT_PRESENTED
+    assert verdict.classification == CoverageClassification.NOT_PRESENTED
     assert verdict.score == 0.0
     # A evidência auditável: exatamente o que estava lá e não foi dito.
     assert verdict.missing_terms == ["adaptadores", "arquitetura", "hexagonal"]
@@ -51,7 +52,7 @@ def test_half_spoken_slide_is_partial():
     )
     verdict = result.slides[0]
 
-    assert verdict.classification == coverage.PARTIAL
+    assert verdict.classification == CoverageClassification.PARTIAL
     assert verdict.present_terms == 2
     assert verdict.total_terms == 4
 
@@ -71,7 +72,9 @@ def test_adversarial_material_and_speech_mismatch():
 
     assert result.coverage_ratio == 0.0
     assert result.mismatch_alert is True
-    assert all(verdict.classification == coverage.NOT_PRESENTED for verdict in result.slides)
+    assert all(
+        verdict.classification == CoverageClassification.NOT_PRESENTED for verdict in result.slides
+    )
 
 
 def test_structural_term_is_not_required():
@@ -110,7 +113,7 @@ def test_slide_without_terms_is_not_flagged():
     result = _evaluate({1: "de a o em"}, "qualquer fala")
     verdict = result.slides[0]
 
-    assert verdict.classification == coverage.NO_TERMS
+    assert verdict.classification == CoverageClassification.NO_TERMS
     assert verdict.score is None
 
 
