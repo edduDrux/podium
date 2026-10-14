@@ -31,7 +31,7 @@ python-pptx · pydub + FFmpeg · rapidfuzz · Python 3.14.
 **Gemini pelas DUAS interfaces:**
 - **LLM** (perguntas): endpoint compatível com OpenAI — SDK `openai` com
   `LLM_BASE_URL=.../v1beta/openai`. JSON mode funciona.
-- **STT**: o Gemini **não tem** `/audio/transcriptions` (retorna 404) — `stt_service`
+- **STT**: o Gemini **não tem** `/audio/transcriptions` (retorna 404) — `adapters/gemini_stt`
   chama a API nativa `generateContent` com áudio inline base64 via `httpx`
   (`MAX_INLINE_AUDIO_MB=18`).
 - Modelo: definido no `.env` (`LLM_MODEL`/`STT_MODEL`). Desde 2026-08-30 é `gemini-3.5-flash` — o `gemini-flash-latest` falhou em 7/7 chamadas STT por 503 (DECISOES §8). **Não usar `gemini-2.5-flash`** — 404 para contas novas.
@@ -45,13 +45,17 @@ app/
   bootstrap.py          raiz de composição: o único que conhece os adaptadores concretos
   core/                 config (pydantic-settings) · database (engine async) · enums
   domain/               PURO (sem framework/banco/SDK): slides (marcador), text,
-                        grounding (aterramento), coverage, panel, ports (Protocols)
+                        grounding (aterramento), coverage, delivery (forma), panel
+                        (prompt + aterramento), personas, session_lifecycle, errors,
+                        ports (Protocols: LanguageModel, Transcriber, Audit)
   adapters/             mundo de fora: gemini_llm · gemini_stt · audio · pdf · pptx ·
                         presentation_files · slide_renderer · storage · audit
-  services/             casos de uso: analysis_service (pipeline) · transcript_service
+  services/             casos de uso: session_service (init/áudio/transcrição/pedido de
+                        análise) · analysis_service (pipeline) · feedback_record (formato
+                        gravado do feedback)
   models/  schemas/     SQLAlchemy · contratos Pydantic da API (sufixo `Response`)
-  api/v1/endpoints/     presentations.py: init / audio / transcript / analyze / status /
-                        feedback / slides
+  api/                  errors.py (erro de domínio → status, e o `responses=` do OpenAPI)
+                        · v1/endpoints/presentations.py: só tradução HTTP ↔ caso de uso
 ```
 
 **Direção da dependência:** `domain/` não importa nada de fora; adaptadores recebem o que
@@ -61,6 +65,10 @@ Postgres.
 
 **Fluxo:** `POST /init` → `POST /{id}/audio` (inteiro ou chunks) → *(opcional)* `PUT /{id}/transcript` → `POST /{id}/analyze`
 (**202** + `BackgroundTasks`) → polling `GET /{id}` até `completed` → `GET /{id}/feedback`.
+O `/analyze` aceita `{"analysis_mode": "basic" | "full"}` (padrão `full`): a completa
+cruza slides e fala e exige áudio; a básica analisa só a fala, aceita transcrição, áudio
+ou os dois, e não tem cobertura (DECISOES §11). Que ação cada estado permite está numa
+tabela só: `domain/session_lifecycle.py`.
 A tarefa de fundo abre a **própria** sessão de banco (a do request já morreu).
 O Cliente VR pode mandar a fala **já transcrita no headset** (`PUT /{id}/transcript`),
 e aí o STT não roda (DECISOES §10). `GET /{id}/slides[/{n}]` serve as páginas em PNG
@@ -74,7 +82,7 @@ no `/audio` a invalida (DECISOES §9).
 docker compose up --build -d                      # podium_db + podium_api
 docker compose exec api alembic upgrade head
 docker compose exec api pip install -r requirements-dev.txt   # 1x por container
-docker compose exec api python -m pytest tests/   # 107 testes, sem rede/cota/banco
+docker compose exec api python -m pytest tests/   # 183 testes, sem rede/cota/banco
 docker compose exec api ruff check .
 docker compose exec api ruff format --check .        # "ruff format ." corrige
 docker compose exec api mypy                         # tipos (mypy.ini)
@@ -194,3 +202,6 @@ Tudo mora em `app/domain/slides.py` — emitir (`block`, `assemble`), normalizar
 4. **Validar o prompt de cada uma das 3 personas** em sessão real antes de afirmar no
    relatório.
 5. **Latência de geração**: medições reais (12,3 s / 15,9 s) acima da meta de p95 < 12 s.
+6. **Medir a análise básica contra a completa** em sessão real antes de afirmar que ela
+   é mais rápida: nas medições existentes o tamanho da entrada não explica a latência
+   (DECISOES §11).
