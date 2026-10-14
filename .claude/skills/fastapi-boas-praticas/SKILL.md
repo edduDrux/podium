@@ -32,19 +32,20 @@ O event loop é uma fila única: uma chamada bloqueante dentro de `async def` co
 | A rota faz… | Usar |
 |---|---|
 | Só I/O com `await` (httpx, asyncpg, aiofiles) | `async def` |
-| Chamada a biblioteca síncrona (sem versão async) | `await run_in_threadpool(fn, *args)` dentro do `async def` |
+| Chamada a biblioteca síncrona (sem versão async) | No endpoint, `await run_in_threadpool(fn, *args)`; no caso de uso (`services/`), `await asyncio.to_thread(fn, *args)` — para ele não depender do FastAPI |
 | Trabalho de CPU pesado (segundos) | Processo separado (Celery/Arq) — **no Podium: não**, §6 veta fila; threadpool é o compromisso aceito |
 
 **Bibliotecas síncronas do Podium**: PyMuPDF (`fitz`), `python-pptx`, `pydub`/FFmpeg.
-Toda chamada a elas a partir de código `async` vai por `run_in_threadpool`.
+Toda chamada a elas a partir de código `async` vai para uma thread.
 
-- **Já correto**: em `presentations.py`, o `/analyze` envolve `concat_chunks` e
-  `get_duration_seconds`; as rotas de slides envolvem `contar_paginas` e `pagina_em_cache`.
-- **Pendente (verificado em 2026-10-11)** — chamadas síncronas direto no loop:
-  - `init_presentation`: `slides_service.is_valid` e `slides_service.extract_text` (PyMuPDF/pptx);
-  - upload inteiro no `/audio`: `audio_service.get_duration_seconds` (decodifica o áudio todo);
-  - `analysis_service.run_pipeline`: `audio_service.normalize_for_stt` e `audio_service.analyze_form`.
-  Na VM de 1 OCPU, decodificar um áudio de vários minutos trava a API durante a análise.
+- **Situação (conferida em 2026-10-13)**: nenhuma chamada síncrona no loop.
+  - `session_service`: `presentation_files.is_valid`/`extract_text`,
+    `audio.get_duration_seconds` e `audio.concat_chunks` por `asyncio.to_thread`;
+  - `analysis_service.run_pipeline`: `_measure_and_export`/`_measure` por
+    `asyncio.to_thread` — e o áudio é decodificado **uma vez** por análise;
+  - rotas de slides: `slide_renderer.count_pages` e `cached_page` por `run_in_threadpool`.
+- Por que importa: na VM de 1 OCPU, decodificar um áudio de vários minutos no loop
+  travaria a API inteira — inclusive o polling — durante a análise.
 
 O threadpool padrão do Starlette tem 40 threads; não usar rota `def` "por via das dúvidas".
 
@@ -82,10 +83,16 @@ O threadpool padrão do Starlette tem 40 threads; não usar rota `def` "por via 
 - Declarar o tipo de retorno **ou** `response_model`; ele valida, filtra e documenta.
   Usar `response_model` só quando o objeto devolvido difere do schema público (ex.:
   devolver um model SQLAlchemy e expor um schema).
-- Os endpoints do Podium declaram os dois com a mesma classe — redundante, não errado.
-  Não vale um commit só para isso; ajustar quando o endpoint for mexido.
+- Os endpoints do Podium declaram só o tipo de retorno (o `response_model` redundante saiu
+  na reestruturação).
 - Documentar o endpoint completo: `summary`, `status_code` e, no `responses=`, os códigos
   de erro que ele pode devolver (o Cliente VR em Unity é escrito contra esse contrato).
+  No Podium o `responses=` vem de `documented(...)` em `app/api/errors.py`, montado da
+  mesma tabela que produz o status — documentação e comportamento não divergem, e
+  `tests/api/test_openapi.py` confere.
+- Erro de regra de negócio é um erro de domínio (`app/domain/errors.py`) levantado pelo
+  caso de uso; um handler global o traduz pela tabela `STATUS_BY_ERROR`. Erro novo =
+  classe no domínio + uma linha na tabela, nunca `HTTPException` dentro de `services/`.
 
 ## 5. Banco (SQLAlchemy 2.0 async)
 
@@ -125,9 +132,11 @@ banco e deixar a sessão num estado terminal (`completed`/`failed`) mesmo em err
   com `monkeypatch` em internos.
 - O guia condena mockar o banco em teste **de integração**: divergência entre mock e
   Postgres explode em produção.
-- **Situação do Podium**: os testes exercitam domínio e serviços com dublês nas portas,
-  sem banco — correto para teste unitário. Lacunas: `tests/api/` e `tests/unit/` estão
-  vazios; nenhum teste chama um endpoint por HTTP nem toca um Postgres real.
+- **Situação do Podium**: `tests/domain`, `tests/adapters` e `tests/services` exercitam
+  as regras e os casos de uso com dublês nas portas; `tests/api` chama os endpoints por
+  HTTP (`ASGITransport`) com a sessão de banco trocada por `dependency_overrides` —
+  contrato HTTP sem banco, por decisão do autor. Lacuna aceita: nenhum teste toca um
+  Postgres real; as migrations são testadas à mão num clone do banco.
 
 ## 9. Migrations (Alembic)
 
@@ -138,8 +147,9 @@ banco e deixar a sessão num estado terminal (`completed`/`failed`) mesmo em err
 
 ## 10. Lint
 
-`ruff check --fix` e `ruff format` (o Ruff substitui black, isort e autoflake). No Podium,
-dentro do container: `docker compose exec api ruff check .`.
+`ruff check --fix` e `ruff format` (o Ruff substitui black, isort e autoflake), mais
+`mypy` para os tipos. No Podium, dentro do container: `docker compose exec api ruff check .`,
+`ruff format --check .` e `mypy` (configuração em `mypy.ini`). A CI roda os três.
 
 ## Anti-padrões — checar em todo diff
 
@@ -151,6 +161,6 @@ dentro do container: `docker compose exec api ruff check .`.
 | `AsyncClient(app=app)` | Removido no httpx 0.28 | `ASGITransport` |
 | `json_encoders` no `model_config` | Depreciado no Pydantic v2 | `@field_serializer` |
 | `Field(restrição, default=None)` | Restrição contradiz o default | Decidir: obrigatório ou opcional |
-| `except Exception` em volta do corpo de uma rota | Esconde bugs, vira 200 silencioso | Capturar a exceção específica e levantar `HTTPException` com status certo. **Exceção legítima**: borda de tarefa de fundo que precisa marcar `failed` e logar (`analysis_service`), e falha de auditoria que não pode derrubar o pipeline |
+| `except Exception` em volta do corpo de uma rota | Esconde bugs, vira 200 silencioso | Deixar o erro de domínio subir até o handler global (tabela em `api/errors.py`); `HTTPException` só para o que é do HTTP. **Exceção legítima**: borda de tarefa de fundo que precisa marcar `failed` e logar (`analysis_service`), e falha de auditoria que não pode derrubar o pipeline |
 | Validação de existência repetida em cada endpoint | Duplicação | Dependência que carrega, valida e devolve |
 | Mock do banco em teste de integração | Diverge do Postgres | Postgres real no teste; dublês só nas portas externas (IA) |
