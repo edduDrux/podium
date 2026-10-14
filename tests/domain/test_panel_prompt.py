@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from app.core.enums import PersonaType
+from app.core.enums import AnalysisMode, PersonaType
 from app.domain import panel, personas, slides
 from app.domain.panel import _limit_slides, _limit_transcript
 
@@ -97,3 +97,24 @@ def test_every_persona_has_a_profile_in_the_prompt(persona):
     assert profile.focus in prompt
     assert profile.tone in prompt
     assert f"Gere até {profile.question_count} perguntas." in prompt
+
+
+def test_basic_prompt_json_example_matches_the_parser():
+    """No modo básico o exemplo só mostra pergunta sobre a fala, e é a única aceita."""
+    prompt = panel.system_prompt(PersonaType.STRICT_PROFESSOR, AnalysisMode.BASIC)
+    example = json.loads(prompt[prompt.index("{") : prompt.rindex("}") + 1])
+
+    questions = panel.parse_questions(
+        example["questions"], allowed_sources=panel.TEMPLATES[AnalysisMode.BASIC].sources
+    )
+
+    assert [(q.source, q.slide_number) for q in questions] == [("speech", None)]
+
+
+@pytest.mark.parametrize("persona", list(PersonaType))
+def test_basic_prompt_carries_the_persona(persona):
+    profile = personas.PROFILES[persona]
+    prompt = panel.system_prompt(persona, AnalysisMode.BASIC)
+
+    assert profile.role in prompt
+    assert "Os slides não fazem parte desta análise." in prompt

@@ -18,7 +18,7 @@ from app import bootstrap
 from app.adapters import audio
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
-from app.core.enums import PresentationStatus
+from app.core.enums import AnalysisMode, PresentationStatus
 from app.domain import coverage, delivery, panel, slides
 from app.domain.panel import GenerationResult
 from app.domain.ports import LanguageModel, Transcriber
@@ -136,6 +136,7 @@ async def run_pipeline(
         generation = await panel.generate_questions(
             language_model,
             persona=presentation.persona,
+            mode=AnalysisMode.FULL,
             slides_text=presentation.slides_text or "",
             transcript=transcript,
             min_score=settings.GROUNDING_MIN_SCORE,
