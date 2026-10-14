@@ -12,6 +12,7 @@ from typing import Annotated
 from fastapi import (
     APIRouter,
     BackgroundTasks,
+    Body,
     File,
     Form,
     HTTPException,
@@ -25,12 +26,13 @@ from fastapi.concurrency import run_in_threadpool
 from app.adapters import slide_renderer
 from app.api.deps import CurrentPresentation, DbSession
 from app.core.config import settings
-from app.core.enums import PersonaType, PresentationStatus, ScenarioType
+from app.core.enums import AnalysisMode, PersonaType, PresentationStatus, ScenarioType
 from app.domain import session_lifecycle
 from app.domain.session_lifecycle import Action
 from app.schemas.feedback import FeedbackResponse
 from app.schemas.presentation import (
     AnalysisAcceptedResponse,
+    AnalysisRequest,
     AudioUploadResponse,
     PresentationInitResponse,
     PresentationResponse,
@@ -100,20 +102,26 @@ async def analyze_presentation(
     db: DbSession,
     presentation: CurrentPresentation,
     background_tasks: BackgroundTasks,
+    body: Annotated[AnalysisRequest | None, Body()] = None,
 ) -> AnalysisAcceptedResponse:
     """Aceita o pedido e processa fora do ciclo da requisição.
 
     O STT + LLM de uma fala de 15 min levaria minutos; segurar a conexão aberta
     arriscaria timeout no Cliente VR. O VR acompanha pela `poll_url` até o status
     virar `completed` (ou `failed`) e então busca o feedback.
+
+    O corpo é opcional: sem ele, a análise é a completa — o comportamento de antes dos
+    modos, para quem já chamava o endpoint sem corpo.
     """
-    await session_service.request_analysis(db, presentation)
-    background_tasks.add_task(analysis_service.run_pipeline_in_background, presentation.id)
+    mode = body.analysis_mode if body else AnalysisMode.FULL
+    await session_service.request_analysis(db, presentation, mode)
+    background_tasks.add_task(analysis_service.run_pipeline_in_background, presentation.id, mode)
 
     return AnalysisAcceptedResponse(
         session_id=presentation.id,
         # O objeto em memória não acompanhou o UPDATE feito direto no banco.
         status=PresentationStatus.PROCESSING,
+        analysis_mode=mode,
         poll_url=f"{settings.API_V1_PREFIX}/presentations/{presentation.id}",
     )
 

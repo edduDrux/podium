@@ -30,9 +30,12 @@ ALLOWED: dict[Action, frozenset[PresentationStatus]] = {
     # Áudio e transcrição novos durante a análise competiriam com ela.
     Action.RECEIVE_AUDIO: _ANY_BUT_PROCESSING,
     Action.RECEIVE_TRANSCRIPT: _ANY_BUT_PROCESSING,
-    # Analisar exige áudio recebido; depois de concluída ou falha, pode reanalisar.
+    # Analisar a partir de `created` só é possível na análise básica com a transcrição
+    # do headset; quem confere se as entradas bastam para o modo pedido é o caso de
+    # uso. Depois de concluída ou falha, pode reanalisar.
     Action.ANALYZE: frozenset(
         {
+            PresentationStatus.CREATED,
             PresentationStatus.AUDIO_RECEIVED,
             PresentationStatus.COMPLETED,
             PresentationStatus.FAILED,
@@ -57,10 +60,8 @@ def _refusal(action: Action, status: PresentationStatus) -> str:
             return "Esta sessão está sendo analisada; envie o áudio depois que ela terminar."
         case Action.RECEIVE_TRANSCRIPT:
             return "Esta sessão está sendo analisada; envie a transcrição antes do /analyze."
-        case Action.ANALYZE if status == PresentationStatus.PROCESSING:
-            return "Esta sessão já está sendo analisada."
         case Action.ANALYZE:
-            return "Nenhum áudio recebido para esta sessão."
+            return "Esta sessão já está sendo analisada."
         case Action.READ_FEEDBACK if status == PresentationStatus.FAILED:
             return (
                 "A análise desta sessão falhou. O motivo está em `error_message`, no "

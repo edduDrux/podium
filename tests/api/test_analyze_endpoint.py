@@ -7,7 +7,8 @@ trocada por um gravador: rodá-la de verdade chamaria o Gemini (cota) e o Postgr
 import pytest
 
 from app.core.config import settings
-from app.core.enums import PresentationStatus
+from app.core.enums import AnalysisMode, PresentationStatus
+from app.models.feedback import Feedback
 from app.services import analysis_service
 from tests.api.conftest import make_wav
 
@@ -19,8 +20,8 @@ def dispatched(monkeypatch) -> list:
     """Sessões que o endpoint mandou analisar em segundo plano."""
     calls: list = []
 
-    async def record(session_id):
-        calls.append(session_id)
+    async def record(session_id, mode):
+        calls.append((session_id, mode))
 
     monkeypatch.setattr(analysis_service, "run_pipeline_in_background", record)
     return calls
@@ -84,5 +85,55 @@ async def test_accepted_analysis_is_202_and_dispatched(client, with_audio, db_se
     body = response.json()
     assert body["status"] == PresentationStatus.PROCESSING
     assert body["poll_url"].endswith(f"/presentations/{with_audio.id}")
-    assert dispatched == [with_audio.id]
+    assert dispatched == [(with_audio.id, AnalysisMode.FULL)]
+    assert body["analysis_mode"] == "full"
     assert db_session.commits == 1
+
+
+@pytest.fixture
+def with_client_transcript(presentation):
+    """Sessão recém-criada com a transcrição do headset e nenhum áudio."""
+    presentation.feedback = Feedback(transcript="falei sobre a metodologia experimental")
+    return presentation
+
+
+@pytest.mark.asyncio
+async def test_basic_analysis_runs_on_the_client_transcript_alone(
+    client, with_client_transcript, dispatched
+):
+    response = await client.post(
+        URL.format(id=with_client_transcript.id), json={"analysis_mode": "basic"}
+    )
+
+    assert response.status_code == 202
+    assert response.json()["analysis_mode"] == "basic"
+    assert dispatched == [(with_client_transcript.id, AnalysisMode.BASIC)]
+
+
+@pytest.mark.asyncio
+async def test_full_analysis_without_audio_is_409_even_with_a_transcript(
+    client, with_client_transcript, dispatched
+):
+    """A completa precisa do sinal: as métricas de forma derivam do áudio."""
+    response = await client.post(URL.format(id=with_client_transcript.id))
+
+    assert response.status_code == 409
+    assert "Nenhum áudio" in response.json()["detail"]
+    assert dispatched == []
+
+
+@pytest.mark.asyncio
+async def test_basic_analysis_without_speech_is_409(client, presentation, dispatched):
+    response = await client.post(URL.format(id=presentation.id), json={"analysis_mode": "basic"})
+
+    assert response.status_code == 409
+    assert "Nenhuma fala" in response.json()["detail"]
+    assert dispatched == []
+
+
+@pytest.mark.asyncio
+async def test_unknown_analysis_mode_is_422(client, with_audio, dispatched):
+    response = await client.post(URL.format(id=with_audio.id), json={"analysis_mode": "turbo"})
+
+    assert response.status_code == 422
+    assert dispatched == []

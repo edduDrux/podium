@@ -17,6 +17,7 @@ from app.domain.errors import (
     MixedChunkFormatsError,
     NoAudioError,
     NoExtractableTextError,
+    NoSpeechError,
     UndecodableAudioError,
     UnreadableFileError,
     UnsupportedFileTypeError,
@@ -26,6 +27,7 @@ STATUS_BY_ERROR: dict[type[DomainError], int] = {
     # 409: a sessão existe, mas o estado dela (ou o que já recebeu) não permite o pedido.
     ActionNotAllowedError: status.HTTP_409_CONFLICT,
     NoAudioError: status.HTTP_409_CONFLICT,
+    NoSpeechError: status.HTTP_409_CONFLICT,
     MixedChunkFormatsError: status.HTTP_409_CONFLICT,
     # 413: grande demais — em bytes ou em minutos.
     FileTooLargeError: status.HTTP_413_CONTENT_TOO_LARGE,

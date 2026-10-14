@@ -15,6 +15,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.core.enums import AnalysisMode
 from app.domain.coverage import CoverageResult
 from app.domain.delivery import DeliveryMetrics
 from app.domain.panel import GenerationResult
@@ -39,25 +40,35 @@ TRANSCRIPT_SOURCE_KEY = "transcript_source"
 ORIGIN_VR_CLIENT = "vr_client"
 ORIGIN_SERVER = "server"
 
+NO_AUDIO_REASON = (
+    "Análise básica sem áudio: as métricas de forma derivam do sinal, e nenhum áudio foi enviado."
+)
+
 
 def write_analysis(
     feedback: Feedback,
     *,
+    mode: AnalysisMode,
     transcript: str,
     origin: dict[str, str | None],
-    delivery_metrics: DeliveryMetrics,
-    coverage: CoverageResult,
+    delivery_metrics: DeliveryMetrics | None,
+    coverage: CoverageResult | None,
     generation: GenerationResult,
     content_analysis: str,
 ) -> None:
-    """Grava no feedback o resultado completo de uma análise."""
+    """Grava no feedback o resultado completo de uma análise.
+
+    Métricas de forma e cobertura podem faltar na análise básica (sem áudio; sem
+    slides): a chave ausente é o registro honesto de que não foram medidas.
+    """
+    feedback.analysis_mode = mode
     feedback.transcript = transcript
     feedback.questions = [
         QuestionResponse.from_question(question).model_dump() for question in generation.questions
     ]
     feedback.content_analysis = content_analysis
-    feedback.metrics = {
-        **delivery_metrics._asdict(),
+    metrics: dict[str, Any] = {
+        **(delivery_metrics._asdict() if delivery_metrics else {}),
         GROUNDING_KEY: {
             "questions_generated": generation.questions_generated,
             "questions_approved": generation.questions_approved,
@@ -66,9 +77,11 @@ def write_analysis(
             "slides_truncated": generation.slides_truncated,
             "transcript_truncated": generation.transcript_truncated,
         },
-        COVERAGE_KEY: CoverageReportResponse.from_result(coverage).model_dump(),
         TRANSCRIPT_SOURCE_KEY: origin,
     }
+    if coverage is not None:
+        metrics[COVERAGE_KEY] = CoverageReportResponse.from_result(coverage).model_dump()
+    feedback.metrics = metrics
 
 
 def write_client_transcript(feedback: Feedback, text: str, engine: str | None) -> None:
@@ -120,9 +133,10 @@ def to_response(presentation: Presentation) -> FeedbackResponse:
         transcript=feedback.transcript,
         questions=questions,
         content_analysis=feedback.content_analysis,
-        delivery_metrics=DeliveryMetricsResponse(**metrics_data)
-        if metrics_data
-        else DeliveryMetricsResponse(),
+        analysis_mode=feedback.analysis_mode or AnalysisMode.FULL,
+        # Métricas de forma ausentes: análise básica sem áudio.
+        delivery_metrics=DeliveryMetricsResponse(**metrics_data) if metrics_data else None,
+        delivery_metrics_reason=None if metrics_data else NO_AUDIO_REASON,
         # Feedback gravado antes da camada de aterramento não tem as contagens; nesse caso
         # o que existe no banco já são as perguntas efetivamente entregues.
         questions_generated=grounding_counts.get("questions_generated", len(questions)),

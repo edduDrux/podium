@@ -29,12 +29,12 @@ from app.services import feedback_record
 logger = logging.getLogger(__name__)
 
 NO_GROUNDED_QUESTIONS = (
-    "Nenhuma das perguntas formuladas pôde ser ancorada em um trecho literal dos slides, "
-    "por isso a banca não devolveu perguntas nesta sessão."
+    "Nenhuma das perguntas formuladas pôde ser ancorada em um trecho literal do material "
+    "analisado, por isso a banca não devolveu perguntas nesta sessão."
 )
 
 
-async def run_pipeline_in_background(session_id: uuid.UUID) -> None:
+async def run_pipeline_in_background(session_id: uuid.UUID, mode: AnalysisMode) -> None:
     """Executa o pipeline fora do ciclo da requisição HTTP.
 
     A sessão de banco do request já foi encerrada quando esta função roda, então
@@ -54,7 +54,7 @@ async def run_pipeline_in_background(session_id: uuid.UUID) -> None:
             return
 
         try:
-            await run_pipeline(db, presentation)
+            await run_pipeline(db, presentation, mode=mode)
         except Exception:
             # run_pipeline já marcou a sessão como FAILED e gravou o erro.
             logger.exception("Análise em segundo plano falhou (%s).", session_id)
@@ -65,8 +65,14 @@ async def run_pipeline(
     presentation: Presentation,
     transcriber: Transcriber | None = None,
     language_model: LanguageModel | None = None,
+    *,
+    mode: AnalysisMode = AnalysisMode.FULL,
 ) -> None:
     """Orquestra o Feedback Duplo: STT -> métricas de forma -> cobertura -> banca.
+
+    No modo `basic` só a fala é analisada: o STT roda apenas se não houver transcrição,
+    as métricas de forma saem só se houver áudio, e não há cobertura (ela compara
+    slides com fala).
 
     Grava o resultado no feedback da sessão e atualiza o status. Quem quer o resultado o
     lê pelo `feedback_record.to_response`, o mesmo caminho do GET /feedback — não há uma
@@ -84,10 +90,12 @@ async def run_pipeline(
     await db.commit()
 
     try:
-        # O /analyze só despacha sessão com áudio. A checagem deixa a precondição explícita:
-        # sem ela, um `None` viraria um TypeError obscuro dentro do pydub.
+        # O /analyze só despacha a sessão com as entradas do modo. A checagem deixa a
+        # precondição explícita: sem ela, um `None` viraria um TypeError obscuro dentro
+        # do pydub.
         audio_path = presentation.audio_path
-        if audio_path is None:
+        transcript = _reusable_transcript(presentation)
+        if audio_path is None and mode is AnalysisMode.FULL:
             raise ValueError("A sessão não tem áudio para analisar.")
 
         # 1. Transcrição — reaproveitada quando a sessão já tem uma DESTE áudio.
@@ -103,8 +111,10 @@ async def run_pipeline(
         # (`asyncio.to_thread`, e não o `run_in_threadpool` dos endpoints, para que o caso
         # de uso não dependa do FastAPI). Da mesma decodificação saem a medição do sinal e,
         # quando o STT vai rodar, a versão mono 16 kHz.
-        transcript = _reusable_transcript(presentation)
+        signal: delivery.Signal | None = None
         if transcript is None:
+            if audio_path is None:
+                raise ValueError("A sessão não tem áudio nem transcrição para analisar.")
             signal, stt_ready_path = await asyncio.to_thread(_measure_and_export, audio_path)
             transcript = await transcriber.transcribe(
                 stt_ready_path, presentation_id=presentation.id
@@ -114,7 +124,8 @@ async def run_pipeline(
             # A transcrição pode ter vindo pronta do headset ou de uma análise anterior; a
             # origem gravada com ela viaja junto, e um feedback anterior a esse registro só
             # pode ter vindo do STT daqui.
-            signal = await asyncio.to_thread(_measure, audio_path)
+            if audio_path is not None:
+                signal = await asyncio.to_thread(_measure, audio_path)
             origin = feedback_record.recorded_origin(
                 presentation.feedback
             ) or feedback_record.describe(feedback_record.ORIGIN_SERVER, None)
@@ -124,19 +135,22 @@ async def run_pipeline(
                 feedback_record.label(origin),
             )
 
-        # 2. FORMA: ritmo e pausas, calculados no domínio sobre o sinal já medido
-        delivery_metrics = delivery.compute(signal, transcript)
+        # 2. FORMA: ritmo e pausas, calculados no domínio sobre o sinal já medido. Sem
+        # áudio (só na análise básica) não há sinal, e as métricas não existem.
+        delivery_metrics = delivery.compute(signal, transcript) if signal else None
 
         # 2.5 COBERTURA: material × transcrição, ANTES e independente do LLM — se a
         # banca degradar para zero perguntas, a resposta a "o que ficou por apresentar?"
         # continua saindo (mesmo princípio das métricas de forma).
-        slide_coverage = _evaluate_coverage(presentation, transcript)
+        slide_coverage = (
+            _evaluate_coverage(presentation, transcript) if mode is AnalysisMode.FULL else None
+        )
 
         # 3. CONTEÚDO: slides + transcrição + persona -> perguntas ancoradas da banca
         generation = await panel.generate_questions(
             language_model,
             persona=presentation.persona,
-            mode=AnalysisMode.FULL,
+            mode=mode,
             slides_text=presentation.slides_text or "",
             transcript=transcript,
             min_score=settings.GROUNDING_MIN_SCORE,
@@ -146,6 +160,7 @@ async def run_pipeline(
         feedback = presentation.feedback or Feedback(presentation_id=presentation.id)
         feedback_record.write_analysis(
             feedback,
+            mode=mode,
             transcript=transcript,
             origin=origin,
             delivery_metrics=delivery_metrics,

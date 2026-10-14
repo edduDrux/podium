@@ -17,7 +17,7 @@ import time
 import pytest
 
 from app.adapters import audio
-from app.core.enums import PresentationStatus
+from app.core.enums import AnalysisMode, PresentationStatus
 from app.domain.ports import LanguageModel, Transcriber
 from app.models.feedback import Feedback
 from app.services import analysis_service, feedback_record
@@ -253,3 +253,55 @@ async def test_pipeline_without_audio_fails_with_a_readable_reason(presentation)
 
     assert presentation.status == PresentationStatus.FAILED
     assert presentation.error_message == "A sessão não tem áudio para analisar."
+
+
+@pytest.mark.asyncio
+async def test_basic_mode_on_the_client_transcript_alone(presentation):
+    """Básica sem áudio: só a fala do headset; sem STT, sem forma, sem cobertura."""
+    presentation.audio_path = None
+    presentation.feedback = Feedback(transcript=SPEECH_ITEM["quote"])
+    spy = SpyTranscriber()
+    model = FakeLanguageModel(model_answer([GROUNDED_ITEM, SPEECH_ITEM]))
+
+    await analysis_service.run_pipeline(
+        FakeDatabase(), presentation, spy, model, mode=AnalysisMode.BASIC
+    )
+    response = feedback_record.to_response(presentation)
+
+    assert spy.calls == 0
+    assert response.analysis_mode == "basic"
+    assert response.delivery_metrics is None
+    assert response.delivery_metrics_reason == feedback_record.NO_AUDIO_REASON
+    assert response.slide_coverage is None
+    # A pergunta "de slide" não tinha como estar ancorada: os slides nem foram ao modelo.
+    assert [q.source for q in response.questions] == ["speech"]
+    assert "### SLIDES" not in model.prompts[0][1]
+
+
+@pytest.mark.asyncio
+async def test_basic_mode_with_audio_runs_stt_and_measures_delivery(presentation):
+    spy = SpyTranscriber(SPEECH_ITEM["quote"])
+
+    await analysis_service.run_pipeline(
+        FakeDatabase(),
+        presentation,
+        spy,
+        FakeLanguageModel(model_answer([SPEECH_ITEM])),
+        mode=AnalysisMode.BASIC,
+    )
+    response = feedback_record.to_response(presentation)
+
+    assert spy.calls == 1
+    assert response.delivery_metrics is not None
+    assert response.delivery_metrics.speech_seconds == 50.0
+    assert response.slide_coverage is None
+
+
+@pytest.mark.asyncio
+async def test_full_mode_is_recorded_on_the_feedback(presentation):
+    await analysis_service.run_pipeline(
+        FakeDatabase(), presentation, FakeTranscriber(), FakeLanguageModel()
+    )
+
+    assert presentation.feedback.analysis_mode == AnalysisMode.FULL
+    assert feedback_record.to_response(presentation).delivery_metrics_reason is None

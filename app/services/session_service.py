@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters import audio, presentation_files, storage
 from app.core.config import settings
-from app.core.enums import PersonaType, PresentationStatus, ScenarioType
+from app.core.enums import AnalysisMode, PersonaType, PresentationStatus, ScenarioType
 from app.domain import session_lifecycle
 from app.domain.errors import (
     ActionNotAllowedError,
@@ -29,6 +29,7 @@ from app.domain.errors import (
     MixedChunkFormatsError,
     NoAudioError,
     NoExtractableTextError,
+    NoSpeechError,
     UndecodableAudioError,
     UnreadableFileError,
     UnsupportedFileTypeError,
@@ -202,12 +203,16 @@ async def register_transcript(
     return clean
 
 
-async def request_analysis(db: AsyncSession, presentation: Presentation) -> None:
-    """Confere o áudio e marca a sessão como `processing`; a análise roda depois.
+async def request_analysis(
+    db: AsyncSession, presentation: Presentation, mode: AnalysisMode
+) -> None:
+    """Confere as entradas do modo pedido e marca a sessão como `processing`.
 
     Quem dispara a análise em segundo plano é o endpoint (`BackgroundTasks` é do
-    FastAPI); este caso de uso garante que, quando ela começar, há um áudio único,
-    legível e dentro do limite, e que nenhuma outra análise da mesma sessão está rodando.
+    FastAPI); este caso de uso garante que, quando ela começar, as entradas bastam
+    para o modo — a completa exige áudio; a básica, áudio ou transcrição —, que o
+    áudio, se houver, é único, legível e dentro do limite, e que nenhuma outra análise
+    da mesma sessão está rodando.
     """
     session_lifecycle.ensure_allowed(Action.ANALYZE, presentation.status)
 
@@ -219,22 +224,15 @@ async def request_analysis(db: AsyncSession, presentation: Presentation) -> None
         destination = storage.audio_path(presentation.id, chunks[0].suffix)
         audio_path = str(await asyncio.to_thread(audio.concat_chunks, chunks, destination))
 
-    if not audio_path:
+    if audio_path:
+        await _ensure_readable_audio(presentation, audio_path)
+    elif mode is AnalysisMode.FULL:
+        # A completa precisa do sinal: as métricas de forma derivam dele.
         raise NoAudioError("Nenhum áudio recebido para esta sessão.")
-
-    # A duração só é confiável sobre o áudio inteiro: um chunk sozinho não diz nada
-    # sobre o tamanho da apresentação.
-    try:
-        duration = await asyncio.to_thread(audio.get_duration_seconds, audio_path)
-    except Exception as exc:
-        # Sem áudio legível não há nem métrica de forma nem transcrição — falhar aqui
-        # avisa o Cliente VR na hora, em vez de deixar o pipeline morrer em segundo plano.
-        logger.warning("Áudio ilegível na sessão %s: %s", presentation.id, exc)
-        raise UndecodableAudioError(
-            "Não foi possível decodificar o áudio enviado para esta sessão."
-        ) from exc
-
-    _ensure_allowed_duration(duration)
+    elif not (presentation.feedback and presentation.feedback.transcript):
+        raise NoSpeechError(
+            "Nenhuma fala recebida: envie o áudio ou a transcrição antes do /analyze."
+        )
 
     # Controle de concorrência otimista: a condição `status != processing` viaja junto do
     # UPDATE, então quem marca a sessão é o próprio banco, num único comando atômico.
@@ -260,6 +258,23 @@ async def request_analysis(db: AsyncSession, presentation: Presentation) -> None
     # que é quem tem `rowcount`. Nenhuma linha atualizada: outra requisição chegou antes.
     if cast(CursorResult[Any], result).rowcount == 0:
         raise ActionNotAllowedError("Esta sessão já está sendo analisada.")
+
+
+async def _ensure_readable_audio(presentation: Presentation, audio_path: str) -> None:
+    """Recusa áudio que não decodifica ou que passa do teto de duração."""
+    # A duração só é confiável sobre o áudio inteiro: um chunk sozinho não diz nada
+    # sobre o tamanho da apresentação.
+    try:
+        duration = await asyncio.to_thread(audio.get_duration_seconds, audio_path)
+    except Exception as exc:
+        # Sem áudio legível não há nem métrica de forma nem transcrição — falhar aqui
+        # avisa o Cliente VR na hora, em vez de deixar o pipeline morrer em segundo plano.
+        logger.warning("Áudio ilegível na sessão %s: %s", presentation.id, exc)
+        raise UndecodableAudioError(
+            "Não foi possível decodificar o áudio enviado para esta sessão."
+        ) from exc
+
+    _ensure_allowed_duration(duration)
 
 
 def _ensure_allowed_duration(duration: float) -> None:

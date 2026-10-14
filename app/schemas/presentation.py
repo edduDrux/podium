@@ -4,6 +4,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.enums import (
+    AnalysisMode,
     PersonaType,
     PresentationStatus,
     ScenarioType,
@@ -35,11 +36,24 @@ class PresentationInitResponse(BaseModel):
     )
 
 
+class AnalysisRequest(BaseModel):
+    """Corpo do `/analyze`. Opcional: sem corpo, a análise é a completa."""
+
+    analysis_mode: AnalysisMode = Field(
+        default=AnalysisMode.FULL,
+        description=(
+            "full: slides + fala, com cobertura; exige áudio. basic: só a fala, sem "
+            "cobertura; aceita a transcrição do headset, o áudio ou os dois."
+        ),
+    )
+
+
 class AnalysisAcceptedResponse(BaseModel):
     """Retorno do `/analyze`: o processamento foi aceito e roda em segundo plano."""
 
     session_id: uuid.UUID
     status: PresentationStatus
+    analysis_mode: AnalysisMode
     poll_url: str = Field(
         description="Consulte esta URL até `status` virar 'completed' ou 'failed'."
     )

@@ -59,7 +59,11 @@ class UndecodableAudioError(DomainError):
 
 
 class NoAudioError(DomainError):
-    """Pediram análise de uma sessão que não recebeu áudio."""
+    """Pediram a análise completa de uma sessão que não recebeu áudio."""
+
+
+class NoSpeechError(DomainError):
+    """Pediram a análise básica sem áudio e sem transcrição: não há fala nenhuma."""
 
 
 class EmptyTranscriptError(DomainError):

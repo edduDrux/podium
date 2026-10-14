@@ -2,6 +2,7 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
+from app.core.enums import AnalysisMode
 from app.domain.coverage import CoverageResult
 from app.domain.delivery import DeliveryMetrics
 from app.domain.panel import Question, QuestionSource
@@ -119,7 +120,12 @@ class FeedbackResponse(BaseModel):
     transcript: str | None = None
     questions: list[QuestionResponse] = Field(default_factory=list)
     content_analysis: str | None = None
-    delivery_metrics: DeliveryMetricsResponse = Field(default_factory=DeliveryMetricsResponse)
+    analysis_mode: AnalysisMode = AnalysisMode.FULL
+    # Nulas só na análise básica sem áudio: as métricas de forma derivam do sinal. O
+    # motivo vem em `delivery_metrics_reason`, para o cliente não confundir ausência de
+    # medição com medição zerada.
+    delivery_metrics: DeliveryMetricsResponse | None = None
+    delivery_metrics_reason: str | None = None
 
     # Transparência do aterramento: quantas perguntas o LLM produziu e quantas
     # sobreviveram à validação. Expor a diferença permite auditar o quanto o modelo
