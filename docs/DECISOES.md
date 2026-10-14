@@ -387,3 +387,45 @@ coluna `analysis_mode` em `feedbacks`):
   entrada (1k × 3k tokens) não explica a latência da geração (12,6–86,2 s); o STT domina
   (85–179 s para 7,3 min de fala) e já é pulado quando o headset envia a transcrição, nos
   dois modos.
+
+### 11.1 Fechamento (2026-10-13)
+
+As 7 etapas foram concluídas em 38 commits na branch `reestruturacao`, de `050653e`
+(skills) a esta nota. A suíte foi de 72 para 183 testes, todos sem rede, sem cota e sem
+banco; `ruff check`, `ruff format --check` e `mypy` (em `app/` e `scripts/`) passam
+limpos, e a CI monta a imagem em amd64 e arm64.
+
+**Como foi verificado.** As duas migrations (`3d9a6f2c8b14`, renomeação para inglês com
+conversão dos dados do JSONB; `c5e2a8f41b97`, coluna `analysis_mode`) rodaram num clone
+do banco de desenvolvimento (`podium_check`, via `pg_dump`): `upgrade` → `downgrade` →
+`upgrade`, com o `downgrade` devolvendo os dados byte a byte. Os endpoints foram
+exercitados numa segunda instância da API (porta 8001) apontada para o clone, sem chamar
+o Gemini. Os comandos de validação dos guias de `docs/partes/` e do README foram
+executados um a um no container.
+
+**Desvios do plano:**
+
+- A porta da banca ficou `LanguageModel.complete(system, user, presentation_id)`, sem
+  temperatura: ela é a mesma para todas as personas, então o adaptador a recebe na
+  construção (`bootstrap.py`) e a porta não precisa carregá-la.
+- A etapa 7 virou o próprio OpenAPI, e não um documento à parte: `documented(...)` em
+  `api/errors.py` monta o `responses=` de cada endpoint a partir da mesma tabela que
+  produz o status, e `tests/api/test_openapi.py` confere que os dois não divergem. O
+  `/docs` é o contrato que o cliente Unity vai ler.
+- `1c8f0a0` é uma quebra de contrato (valores e chaves em inglês). Não afeta ninguém
+  porque o Cliente VR ainda não existe; os feedbacks antigos são convertidos pela
+  migration e continuam legíveis.
+- Sem a entrada que o modo exige, o `/analyze` recusa com **409**, não 422: a sessão
+  existe, mas ainda não recebeu o que o modo pede (mesma família do "fora de ordem").
+
+**Pendências que dependem do autor:**
+
+1. **Aplicar as migrations no banco de desenvolvimento**
+   (`docker compose exec api alembic upgrade head`). Até lá, o código novo roda contra o
+   esquema antigo (`f4b1c9d2e370`): colunas de `llm_calls`, rótulos dos enums e a coluna
+   `feedbacks.analysis_mode` não batem com os models.
+2. **Aprovar o texto das 3 personas** (`app/domain/personas.py`): são rascunhos.
+3. **Validar em sessão real** o prompt da análise completa (mudou: origem `speech`) e o
+   da básica (novo). Gasta cota.
+4. **Medir a básica contra a completa** antes de afirmar ganho de tempo
+   (`scripts/test_flow.ps1 -AnalysisMode basic`).
