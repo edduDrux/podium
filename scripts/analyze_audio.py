@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from app.adapters import audio
+from app.domain import delivery as delivery_rules
 
 
 def main() -> int:
@@ -30,7 +31,8 @@ def main() -> int:
     if len(sys.argv) == 3:
         transcript = Path(sys.argv[2]).read_text(encoding="utf-8")
 
-    delivery = audio.analyze_delivery(path, transcript)
+    # O mesmo caminho do pipeline: o adaptador mede o sinal, o domínio calcula as métricas.
+    delivery = delivery_rules.compute(audio.measure_signal(audio.load(path)), transcript)
 
     print(f"duração        : {delivery.duration_seconds} s")
     print(f"tempo de fala  : {delivery.speech_seconds} s (duração menos as pausas)")
