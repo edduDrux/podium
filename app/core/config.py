@@ -18,7 +18,9 @@ class Settings(BaseSettings):
     # --- Aplicação ---
     PROJECT_NAME: str = "PODIUM API"
     ENVIRONMENT: str = "development"
-    DEBUG: bool = True
+    # Desligado por padrão: ligado, despeja todo SQL no log (`echo` da engine) e baixa o
+    # nível do logging. O `.env` de desenvolvimento liga explicitamente.
+    DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
 
     # --- Banco de Dados ---
@@ -28,9 +30,7 @@ class Settings(BaseSettings):
     # Não usar ["*"]: o `main.py` sobe o middleware com `allow_credentials=True`, e a spec
     # de CORS proíbe curinga junto de credenciais — o navegador rejeita a resposta e o
     # erro aparece do lado do cliente, longe da causa. Origens explícitas sempre.
-    BACKEND_CORS_ORIGINS: list[str] = Field(
-        default_factory=lambda: ["http://localhost:3000"]
-    )
+    BACKEND_CORS_ORIGINS: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
 
     # --- IA: Google Gemini (free tier) ---
     # O Gemini expõe DUAS interfaces e o PODIUM usa as duas:
@@ -39,8 +39,10 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     LLM_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     GEMINI_API_BASE: str = "https://generativelanguage.googleapis.com/v1beta"
-    LLM_MODEL: str = "gemini-flash-latest"
-    STT_MODEL: str = "gemini-flash-latest"
+    # `gemini-flash-latest` falhou em 7/7 chamadas de STT por 503 (DECISOES §8); um
+    # default que já se mostrou indisponível é armadilha para quem sobe sem `.env`.
+    LLM_MODEL: str = "gemini-3.5-flash"
+    STT_MODEL: str = "gemini-3.5-flash"
 
     # A tarefa da banca é extrair e cobrar o que está no material, não variar
     # criativamente — e criatividade, aqui, se manifesta como invenção.
@@ -58,8 +60,8 @@ class Settings(BaseSettings):
     # Ninguém fala o slide palavra por palavra, então os limiares são deliberadamente
     # baixos. Valores iniciais do PRD Fase 3 — calibrar com sessões reais antes de
     # fixar no relatório.
-    COVERAGE_FULL_THRESHOLD: float = 0.6      # score >= : slide apresentado
-    COVERAGE_PARTIAL_THRESHOLD: float = 0.3   # score >= : parcialmente apresentado
+    COVERAGE_FULL_THRESHOLD: float = 0.6  # score >= : slide apresentado
+    COVERAGE_PARTIAL_THRESHOLD: float = 0.3  # score >= : parcialmente apresentado
     # Cobertura global abaixo disto liga o alerta de descolamento entre material e
     # fala — o campo que o teste adversarial do §14 mede.
     COVERAGE_ALERT_THRESHOLD: float = 0.15

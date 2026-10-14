@@ -1,48 +1,40 @@
+"""Caso de uso da análise: o pipeline do Feedback Duplo.
+
+Orquestra STT, métricas de forma, cobertura e banca, e grava o resultado pelo
+`feedback_record`, que é o dono do formato gravado. Roda em segundo plano, disparado
+pelo /analyze, com a própria sessão de banco.
+"""
+
+import asyncio
 import logging
 import uuid
-from typing import Any
+from pathlib import Path
 
-from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app import bootstrap
+from app.adapters import audio
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
-from app.core.enums import PresentationStatus
-from app.domain import cobertura, slides
-from app.domain.banca import ResultadoGeracao
-from app.domain.ports import BancaExaminadora, Transcritor
+from app.core.enums import AnalysisMode, PresentationStatus
+from app.domain import coverage, delivery, panel, slides
+from app.domain.panel import GenerationResult
+from app.domain.ports import LanguageModel, Transcriber
 from app.models.feedback import Feedback
 from app.models.presentation import Presentation
-from app.schemas.feedback import (
-    FeedbackResponse,
-    GeneratedQuestion,
-    SlideCoverage,
-    SlideCoverageReport,
-    SpeechMetrics,
-)
-from app.services import audio_service, provedores, transcript_service
+from app.services import feedback_record
 
 logger = logging.getLogger(__name__)
 
-# As contagens do aterramento não são métrica de FORMA, mas moram no mesmo JSONB por
-# não existir coluna própria para elas — criar uma exigiria migration. A chave é separada
-# para que `SpeechMetrics` continue representando só o que vem do áudio.
-GROUNDING_KEY = "aterramento"
-# Mesmo racional para os flags de truncamento de contexto: chave própria no JSONB
-# existente, sem migration e sem contaminar as métricas de áudio.
-CONTEXT_KEY = "contexto"
-# E para a cobertura de slides: o relatório inteiro mora na sua chave do JSONB.
-COVERAGE_KEY = "cobertura"
-
-SEM_PERGUNTAS_ANCORADAS = (
-    "Nenhuma das perguntas formuladas pôde ser ancorada em um trecho literal dos slides, "
-    "por isso a banca não devolveu perguntas nesta sessão."
+NO_GROUNDED_QUESTIONS = (
+    "Nenhuma das perguntas formuladas pôde ser ancorada em um trecho literal do material "
+    "analisado, por isso a banca não devolveu perguntas nesta sessão."
 )
 
 
-async def run_pipeline_in_background(session_id: uuid.UUID) -> None:
+async def run_pipeline_in_background(session_id: uuid.UUID, mode: AnalysisMode) -> None:
     """Executa o pipeline fora do ciclo da requisição HTTP.
 
     A sessão de banco do request já foi encerrada quando esta função roda, então
@@ -62,7 +54,7 @@ async def run_pipeline_in_background(session_id: uuid.UUID) -> None:
             return
 
         try:
-            await run_pipeline(db, presentation)
+            await run_pipeline(db, presentation, mode=mode)
         except Exception:
             # run_pipeline já marcou a sessão como FAILED e gravou o erro.
             logger.exception("Análise em segundo plano falhou (%s).", session_id)
@@ -71,24 +63,41 @@ async def run_pipeline_in_background(session_id: uuid.UUID) -> None:
 async def run_pipeline(
     db: AsyncSession,
     presentation: Presentation,
-    transcritor: Transcritor | None = None,
-    banca: BancaExaminadora | None = None,
-) -> FeedbackResponse:
-    """Orquestra o Feedback Duplo: STT -> métricas de forma -> perguntas do LLM.
+    transcriber: Transcriber | None = None,
+    language_model: LanguageModel | None = None,
+    *,
+    mode: AnalysisMode = AnalysisMode.FULL,
+) -> None:
+    """Orquestra o Feedback Duplo: STT -> métricas de forma -> cobertura -> banca.
 
-    Persiste o resultado em `feedbacks` e atualiza o status da sessão.
+    No modo `basic` só a fala é analisada: o STT roda apenas se não houver transcrição,
+    as métricas de forma saem só se houver áudio, e não há cobertura (ela compara
+    slides com fala).
+
+    Grava o resultado no feedback da sessão e atualiza o status. Quem quer o resultado o
+    lê pelo `feedback_record.to_response`, o mesmo caminho do GET /feedback — não há uma
+    segunda montagem da resposta para divergir da primeira.
 
     Os serviços externos entram por parâmetro, como portas. Em produção vêm da raiz de
-    composição; num teste, um transcritor e uma banca falsos exercitam o pipeline inteiro
+    composição; num teste, um transcritor e um modelo de linguagem falsos exercitam o
+    pipeline inteiro — o aterramento incluído, que roda de verdade sobre o JSON do dublê —
     sem rede, sem cota de IA e sem depender do humor do modelo.
     """
-    transcritor = transcritor or provedores.transcritor()
-    banca = banca or provedores.banca()
+    transcriber = transcriber or bootstrap.transcriber()
+    language_model = language_model or bootstrap.language_model()
     presentation.status = PresentationStatus.PROCESSING
     presentation.error_message = None
     await db.commit()
 
     try:
+        # O /analyze só despacha a sessão com as entradas do modo. A checagem deixa a
+        # precondição explícita: sem ela, um `None` viraria um TypeError obscuro dentro
+        # do pydub.
+        audio_path = presentation.audio_path
+        transcript = _reusable_transcript(presentation)
+        if audio_path is None and mode is AnalysisMode.FULL:
+            raise ValueError("A sessão não tem áudio para analisar.")
+
         # 1. Transcrição — reaproveitada quando a sessão já tem uma DESTE áudio.
         # O STT é a etapa mais cara do pipeline (tokens proporcionais à duração: 11.019
         # para 436,5 s de áudio, medido na sessão d5caa4fd em 2026-08-30) e a mais lenta
@@ -96,81 +105,73 @@ async def run_pipeline(
         # cobertura recalibrado — não muda o que foi dito, e a própria sessão d5caa4fd
         # pagou o STT duas vezes por isso. A transcrição pertence ao áudio: o endpoint
         # /audio a apaga ao receber áudio novo, então "existe" significa "é deste áudio".
-        transcript = _transcricao_reaproveitavel(presentation)
+        #
+        # O áudio é decodificado UMA vez por análise, numa thread: decodificar é trabalho
+        # de CPU do pydub/FFmpeg e, no event loop, congelaria todas as requisições
+        # (`asyncio.to_thread`, e não o `run_in_threadpool` dos endpoints, para que o caso
+        # de uso não dependa do FastAPI). Da mesma decodificação saem a medição do sinal e,
+        # quando o STT vai rodar, a versão mono 16 kHz.
+        signal: delivery.Signal | None = None
         if transcript is None:
-            stt_ready_path = audio_service.normalize_for_stt(presentation.audio_path)
-            transcript = await transcritor.transcrever(
+            if audio_path is None:
+                raise ValueError("A sessão não tem áudio nem transcrição para analisar.")
+            signal, stt_ready_path = await asyncio.to_thread(_measure_and_export, audio_path)
+            transcript = await transcriber.transcribe(
                 stt_ready_path, presentation_id=presentation.id
             )
-            origem = transcript_service.descrever(
-                transcript_service.ORIGEM_SERVIDOR, settings.STT_MODEL
-            )
+            origin = feedback_record.describe(feedback_record.ORIGIN_SERVER, settings.STT_MODEL)
         else:
-            # A transcrição pode ter vindo pronta do headset (transcript_service) ou de
-            # uma análise anterior; a origem gravada com ela viaja junto, e um feedback
-            # anterior a esse registro só pode ter vindo do STT daqui.
-            origem = transcript_service.origem_registrada(
+            # A transcrição pode ter vindo pronta do headset ou de uma análise anterior; a
+            # origem gravada com ela viaja junto, e um feedback anterior a esse registro só
+            # pode ter vindo do STT daqui.
+            if audio_path is not None:
+                signal = await asyncio.to_thread(_measure, audio_path)
+            origin = feedback_record.recorded_origin(
                 presentation.feedback
-            ) or transcript_service.descrever(transcript_service.ORIGEM_SERVIDOR, None)
+            ) or feedback_record.describe(feedback_record.ORIGIN_SERVER, None)
             logger.info(
                 "Sessão %s: transcrição existente (%s) reaproveitada, STT não chamado.",
                 presentation.id,
-                transcript_service.rotulo(origem),
+                feedback_record.label(origin),
             )
 
-        # 2. FORMA: ritmo e pausas
-        metrics = audio_service.analyze_form(presentation.audio_path, transcript)
+        # 2. FORMA: ritmo e pausas, calculados no domínio sobre o sinal já medido. Sem
+        # áudio (só na análise básica) não há sinal, e as métricas não existem.
+        delivery_metrics = delivery.compute(signal, transcript) if signal else None
 
         # 2.5 COBERTURA: material × transcrição, ANTES e independente do LLM — se a
         # banca degradar para zero perguntas, a resposta a "o que ficou por apresentar?"
         # continua saindo (mesmo princípio das métricas de forma).
-        coverage = _avaliar_cobertura(presentation, transcript)
+        slide_coverage = (
+            _evaluate_coverage(presentation, transcript) if mode is AnalysisMode.FULL else None
+        )
 
         # 3. CONTEÚDO: slides + transcrição + persona -> perguntas ancoradas da banca
-        generation = await banca.gerar_perguntas(
+        generation = await panel.generate_questions(
+            language_model,
+            persona=presentation.persona,
+            mode=mode,
             slides_text=presentation.slides_text or "",
             transcript=transcript,
-            persona=presentation.persona,
+            min_score=settings.GROUNDING_MIN_SCORE,
             presentation_id=presentation.id,
         )
 
-        content_analysis = _consolidar_analise(generation, presentation.id)
-
         feedback = presentation.feedback or Feedback(presentation_id=presentation.id)
-        feedback.transcript = transcript
-        feedback.questions = [q.model_dump() for q in generation.questions]
-        feedback.content_analysis = content_analysis
-        feedback.metrics = {
-            **metrics.model_dump(),
-            GROUNDING_KEY: {
-                "perguntas_geradas": generation.perguntas_geradas,
-                "perguntas_aprovadas": generation.perguntas_aprovadas,
-            },
-            CONTEXT_KEY: {
-                "slides_truncados": generation.slides_truncados,
-                "transcricao_truncada": generation.transcricao_truncada,
-            },
-            COVERAGE_KEY: coverage.model_dump(),
-            transcript_service.TRANSCRIPT_KEY: origem,
-        }
-
+        feedback_record.write_analysis(
+            feedback,
+            mode=mode,
+            transcript=transcript,
+            origin=origin,
+            delivery_metrics=delivery_metrics,
+            coverage=slide_coverage,
+            generation=generation,
+            content_analysis=_consolidate_analysis(generation, presentation.id),
+        )
+        presentation.feedback = feedback
         db.add(feedback)
         presentation.status = PresentationStatus.COMPLETED
         await db.commit()
-
-        return FeedbackResponse(
-            session_id=presentation.id,
-            transcript=transcript,
-            questions=generation.questions,
-            content_analysis=content_analysis,
-            metrics=metrics,
-            perguntas_geradas=generation.perguntas_geradas,
-            perguntas_aprovadas=generation.perguntas_aprovadas,
-            slides_truncados=generation.slides_truncados,
-            transcricao_truncada=generation.transcricao_truncada,
-            slide_coverage=coverage,
-            transcript_source=transcript_service.rotulo(origem),
-        )
 
     except Exception as exc:
         logger.exception("Falha ao analisar a sessão %s", presentation.id)
@@ -180,7 +181,22 @@ async def run_pipeline(
         raise
 
 
-def _transcricao_reaproveitavel(presentation: Presentation) -> str | None:
+def _measure_and_export(audio_path: str) -> tuple[delivery.Signal, Path]:
+    """Decodifica uma vez e devolve o sinal medido e o arquivo para o STT.
+
+    Só o resultado sai da função: o áudio decodificado (centenas de MB numa fala de 15
+    min) é liberado aqui, antes da chamada ao STT, que leva minutos.
+    """
+    decoded = audio.load(audio_path)
+    return audio.measure_signal(decoded), audio.export_for_stt(decoded, audio_path)
+
+
+def _measure(audio_path: str) -> delivery.Signal:
+    """Decodifica uma vez e devolve só o sinal: a transcrição já existe."""
+    return audio.measure_signal(audio.load(audio_path))
+
+
+def _reusable_transcript(presentation: Presentation) -> str | None:
     """Transcrição anterior da sessão, se houver uma que valha a pena reusar.
 
     Transcrição vazia não é reaproveitada: pode ser o resultado legítimo de um áudio sem
@@ -194,41 +210,31 @@ def _transcricao_reaproveitavel(presentation: Presentation) -> str | None:
     return feedback.transcript
 
 
-def _avaliar_cobertura(
-    presentation: Presentation, transcript: str
-) -> SlideCoverageReport:
-    """Executa o domínio da cobertura e converte para o contrato da API.
+def _evaluate_coverage(presentation: Presentation, transcript: str) -> coverage.CoverageResult:
+    """Executa o domínio da cobertura com os limiares da configuração.
 
     A raiz de composição é aqui: o domínio recebe os limiares por parâmetro e não sabe
     que existe um `settings`.
     """
-    resultado = cobertura.avaliar(
+    result = coverage.evaluate(
         slides.parse(presentation.slides_text or ""),
         transcript,
-        limiar_apresentado=settings.COVERAGE_FULL_THRESHOLD,
-        limiar_parcial=settings.COVERAGE_PARTIAL_THRESHOLD,
-        limiar_alerta=settings.COVERAGE_ALERT_THRESHOLD,
+        presented_threshold=settings.COVERAGE_FULL_THRESHOLD,
+        partial_threshold=settings.COVERAGE_PARTIAL_THRESHOLD,
+        alert_threshold=settings.COVERAGE_ALERT_THRESHOLD,
     )
 
-    if resultado.alerta_descolamento:
+    if result.mismatch_alert:
         logger.warning(
             "Sessão %s: descolamento entre material e fala — cobertura de %.1f%%.",
             presentation.id,
-            resultado.percentual_coberto * 100,
+            result.coverage_ratio * 100,
         )
 
-    return SlideCoverageReport(
-        slides=[
-            SlideCoverage(**avaliacao._asdict()) for avaliacao in resultado.slides
-        ],
-        percentual_coberto=resultado.percentual_coberto,
-        alerta_descolamento=resultado.alerta_descolamento,
-    )
+    return result
 
 
-def _consolidar_analise(
-    generation: ResultadoGeracao, session_id: uuid.UUID
-) -> str:
+def _consolidate_analysis(generation: GenerationResult, session_id: uuid.UUID) -> str:
     """Acrescenta o aviso de banca vazia à análise textual, quando for o caso.
 
     Sessão sem pergunta aprovada NÃO é falha: o pipeline rodou inteiro e a resposta
@@ -242,88 +248,9 @@ def _consolidar_analise(
     logger.warning(
         "Sessão %s concluída sem perguntas aprovadas (%d geradas pelo LLM).",
         session_id,
-        generation.perguntas_geradas,
+        generation.questions_generated,
     )
 
     if not generation.content_analysis:
-        return SEM_PERGUNTAS_ANCORADAS
-    return f"{generation.content_analysis}\n\n{SEM_PERGUNTAS_ANCORADAS}"
-
-
-def to_response(presentation: Presentation) -> FeedbackResponse:
-    """Converte um Feedback já persistido no contrato de saída."""
-    feedback = presentation.feedback
-    if feedback is None:
-        return FeedbackResponse(session_id=presentation.id)
-
-    metrics_data = dict(feedback.metrics or {})
-    aterramento = metrics_data.pop(GROUNDING_KEY, {}) or {}
-    contexto = metrics_data.pop(CONTEXT_KEY, {}) or {}
-    cobertura_gravada = metrics_data.pop(COVERAGE_KEY, None)
-    metrics_data.pop(transcript_service.TRANSCRIPT_KEY, None)
-    questions = _questions_persistidas(feedback.questions, presentation.id)
-
-    return FeedbackResponse(
-        session_id=presentation.id,
-        transcript=feedback.transcript,
-        questions=questions,
-        content_analysis=feedback.content_analysis,
-        metrics=SpeechMetrics(**metrics_data) if metrics_data else SpeechMetrics(),
-        # Feedback gravado antes da camada de aterramento não tem as contagens; nesse caso
-        # o que existe no banco já são as perguntas efetivamente entregues.
-        perguntas_geradas=aterramento.get("perguntas_geradas", len(questions)),
-        perguntas_aprovadas=aterramento.get("perguntas_aprovadas", len(questions)),
-        # Feedback anterior a este flag não declarou truncamento; False é o registro
-        # honesto do que se sabe dele.
-        slides_truncados=contexto.get("slides_truncados", False),
-        transcricao_truncada=contexto.get("transcricao_truncada", False),
-        slide_coverage=_cobertura_persistida(cobertura_gravada, presentation.id),
-        transcript_source=transcript_service.rotulo(
-            transcript_service.origem_registrada(feedback)
-        ),
-    )
-
-
-def _cobertura_persistida(
-    dados: Any, session_id: uuid.UUID
-) -> SlideCoverageReport | None:
-    """Reconstrói o relatório de cobertura gravado, tolerando o que não couber no contrato.
-
-    `None` para feedback anterior à cobertura — ausência de medição não é medição
-    zerada, e o Cliente VR precisa distinguir as duas.
-    """
-    if not dados:
-        return None
-    try:
-        return SlideCoverageReport(**dados)
-    except (ValidationError, TypeError):
-        logger.warning(
-            "Cobertura persistida da sessão %s é incompatível com o contrato atual "
-            "e foi omitida.",
-            session_id,
-        )
-        return None
-
-
-def _questions_persistidas(
-    itens: list[dict[str, Any]], session_id: uuid.UUID
-) -> list[GeneratedQuestion]:
-    """Reconstrói as perguntas gravadas, ignorando as que não cabem no contrato atual.
-
-    Feedbacks gerados antes do aterramento não têm `slide_origem`/`trecho_literal`.
-    Deixar a validação estourar transformaria o GET dessas sessões em erro 500 — melhor
-    devolver o que ainda é legível do que perder a sessão inteira.
-    """
-    perguntas: list[GeneratedQuestion] = []
-
-    for item in itens or []:
-        try:
-            perguntas.append(GeneratedQuestion(**item))
-        except (ValidationError, TypeError):
-            logger.warning(
-                "Pergunta persistida da sessão %s é incompatível com o contrato atual "
-                "(provavelmente anterior ao aterramento) e foi omitida.",
-                session_id,
-            )
-
-    return perguntas
+        return NO_GROUNDED_QUESTIONS
+    return f"{generation.content_analysis}\n\n{NO_GROUNDED_QUESTIONS}"

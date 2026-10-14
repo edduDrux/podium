@@ -4,24 +4,12 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.enums import (
+    AnalysisMode,
     PersonaType,
     PresentationStatus,
     ScenarioType,
     SourceFileType,
 )
-
-
-class PresentationInitRequest(BaseModel):
-    """Campos do multipart/form-data em POST /presentations/init (além do PDF)."""
-
-    scenario: ScenarioType = Field(
-        default=ScenarioType.SALA_DE_AULA,
-        description="Cenário VR. No MVP, apenas 'sala_de_aula'.",
-    )
-    persona: PersonaType = Field(description="Persona que a banca (LLM) vai assumir.")
-    user_id: uuid.UUID | None = Field(
-        default=None, description="Opcional no MVP — sessões anônimas são aceitas."
-    )
 
 
 class PresentationResponse(BaseModel):
@@ -48,11 +36,24 @@ class PresentationInitResponse(BaseModel):
     )
 
 
+class AnalysisRequest(BaseModel):
+    """Corpo do `/analyze`. Opcional: sem corpo, a análise é a completa."""
+
+    analysis_mode: AnalysisMode = Field(
+        default=AnalysisMode.FULL,
+        description=(
+            "full: slides + fala, com cobertura; exige áudio. basic: só a fala, sem "
+            "cobertura; aceita a transcrição do headset, o áudio ou os dois."
+        ),
+    )
+
+
 class AnalysisAcceptedResponse(BaseModel):
     """Retorno do `/analyze`: o processamento foi aceito e roda em segundo plano."""
 
     session_id: uuid.UUID
     status: PresentationStatus
+    analysis_mode: AnalysisMode
     poll_url: str = Field(
         description="Consulte esta URL até `status` virar 'completed' ou 'failed'."
     )
@@ -100,9 +101,9 @@ class SlidesInfoResponse(BaseModel):
     session_id: uuid.UUID
     file_type: SourceFileType
     total: int = Field(description="Páginas renderizáveis; 0 quando o formato não permite.")
-    renderizavel: bool
-    motivo: str | None = Field(
-        default=None, description="Por que não há imagens, quando `renderizavel` é falso."
+    renderable: bool
+    reason: str | None = Field(
+        default=None, description="Por que não há imagens, quando `renderable` é falso."
     )
-    largura_padrao: int
-    largura_maxima: int
+    default_width: int
+    max_width: int

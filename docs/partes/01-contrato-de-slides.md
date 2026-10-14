@@ -8,15 +8,15 @@ separados por linha em branco. Este é o "idioma" interno do projeto.
 
 | Arquivo | Papel |
 |---|---|
-| [`app/domain/slides.py`](../../app/domain/slides.py) | Emite (`bloco`, `montar`), normaliza (`normalizar`) e interpreta (`parse`) o marcador |
-| [`app/domain/texto.py`](../../app/domain/texto.py) | Normalização para comparação (minúsculas, sem acento/pontuação) — a "régua" comum do aterramento e da cobertura |
+| [`app/domain/slides.py`](../../app/domain/slides.py) | Emite (`block`, `assemble`), normaliza (`normalize`) e interpreta (`parse`) o marcador |
+| [`app/domain/text.py`](../../app/domain/text.py) | Normalização para comparação (minúsculas, sem acento/pontuação) — a "régua" comum do aterramento e da cobertura |
 
 ## Por onde começar a ler
 
 1. O docstring do módulo `slides.py` — explica por que emitir e interpretar moram juntos.
-2. `MARCADOR_RE` e o comentário sobre a âncora `^...$`.
-3. `parse()` — como o texto vira `{numero: conteudo}`.
-4. `_neutralizar_marcadores()` — a defesa contra conteúdo que imita o marcador.
+2. `MARKER_RE` e o comentário sobre a âncora `^...$`.
+3. `parse()` — como o texto vira `{número: conteúdo}`.
+4. `_neutralize_markers()` — a defesa contra conteúdo que imita o marcador.
 
 ## O que esta parte garante
 
@@ -33,7 +33,7 @@ separados por linha em branco. Este é o "idioma" interno do projeto.
 
 ```bash
 docker compose exec api pip install -r requirements-dev.txt   # 1x por container
-docker compose exec api python -m pytest tests/test_slides.py -v
+docker compose exec api python -m pytest tests/domain/test_slides.py -v
 ```
 
 Cada teste tem nome descritivo — ler a lista `-v` já é um resumo das garantias acima.
@@ -41,5 +41,6 @@ Cada teste tem nome descritivo — ler a lista `-v` já é um resumo das garanti
 ## Armadilha
 
 Qualquer mudança neste formato afeta o prompt do LLM **e** a validação de evidência ao
-mesmo tempo. Mudar o marcador sem rodar `tests/test_slides.py`, `test_grounding_service.py`
-e `test_llm_service.py` juntos é a receita do bug mais caro do projeto.
+mesmo tempo. Mudar o marcador sem rodar `tests/domain/test_slides.py`,
+`tests/domain/test_grounding.py` e `tests/domain/test_panel_prompt.py` juntos é a receita
+do bug mais caro do projeto.

@@ -9,3 +9,8 @@ storage/
 .pytest_cache
 .ruff_cache
 .mypy_cache
+
+# Configuração de ferramentas do desenvolvedor: não pertence à imagem.
+.claude
+.idea
+.github

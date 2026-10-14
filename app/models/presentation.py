@@ -24,16 +24,14 @@ class Presentation(Base, TimestampMixin):
 
     __tablename__ = "presentations"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
 
     scenario: Mapped[ScenarioType] = mapped_column(
         SAEnum(ScenarioType, name="scenario_type"),
-        default=ScenarioType.SALA_DE_AULA,
+        default=ScenarioType.CLASSROOM,
         nullable=False,
     )
     persona: Mapped[PersonaType] = mapped_column(

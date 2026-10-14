@@ -31,7 +31,7 @@ python-pptx · pydub + FFmpeg · rapidfuzz · Python 3.14.
 **Gemini pelas DUAS interfaces:**
 - **LLM** (perguntas): endpoint compatível com OpenAI — SDK `openai` com
   `LLM_BASE_URL=.../v1beta/openai`. JSON mode funciona.
-- **STT**: o Gemini **não tem** `/audio/transcriptions` (retorna 404) — `stt_service`
+- **STT**: o Gemini **não tem** `/audio/transcriptions` (retorna 404) — `adapters/gemini_stt`
   chama a API nativa `generateContent` com áudio inline base64 via `httpx`
   (`MAX_INLINE_AUDIO_MB=18`).
 - Modelo: definido no `.env` (`LLM_MODEL`/`STT_MODEL`). Desde 2026-08-30 é `gemini-3.5-flash` — o `gemini-flash-latest` falhou em 7/7 chamadas STT por 503 (DECISOES §8). **Não usar `gemini-2.5-flash`** — 404 para contas novas.
@@ -42,22 +42,33 @@ python-pptx · pydub + FFmpeg · rapidfuzz · Python 3.14.
 ```
 app/
   main.py               lifespan: janitor do storage + reconciliação de sessões órfãs
+  bootstrap.py          raiz de composição: o único que conhece os adaptadores concretos
   core/                 config (pydantic-settings) · database (engine async) · enums
-  models/  schemas/     SQLAlchemy · contratos Pydantic da API
-  domain/               PURO (sem framework/banco/SDK): slides, texto, cobertura,
-                        banca (ResultadoGeracao), ports (Protocols)
-  api/v1/endpoints/     presentations.py: init / audio / analyze / status / feedback
-  services/             slides|pdf|pptx (ingestão) · storage · audio · stt · llm ·
-                        grounding · audit · provedores (raiz de composição) · analysis
+  domain/               PURO (sem framework/banco/SDK): slides (marcador), text,
+                        grounding (aterramento), coverage, delivery (forma), panel
+                        (prompt + aterramento), personas, session_lifecycle, errors,
+                        ports (Protocols: LanguageModel, Transcriber, Audit)
+  adapters/             mundo de fora: gemini_llm · gemini_stt · audio · pdf · pptx ·
+                        presentation_files · slide_renderer · storage · audit
+  services/             casos de uso: session_service (init/áudio/transcrição/pedido de
+                        análise) · analysis_service (pipeline) · feedback_record (formato
+                        gravado do feedback)
+  models/  schemas/     SQLAlchemy · contratos Pydantic da API (sufixo `Response`)
+  api/                  errors.py (erro de domínio → status, e o `responses=` do OpenAPI)
+                        · v1/endpoints/presentations.py: só tradução HTTP ↔ caso de uso
 ```
 
 **Direção da dependência:** `domain/` não importa nada de fora; adaptadores recebem o que
-precisam pelas portas; `provedores.py` é o único módulo que conhece as escolhas concretas.
+precisam pelas portas; `bootstrap.py` é o único módulo que conhece as escolhas concretas.
 É isso que permite rodar `run_pipeline` inteiro com dublês — sem rede, sem cota, sem
 Postgres.
 
 **Fluxo:** `POST /init` → `POST /{id}/audio` (inteiro ou chunks) → *(opcional)* `PUT /{id}/transcript` → `POST /{id}/analyze`
 (**202** + `BackgroundTasks`) → polling `GET /{id}` até `completed` → `GET /{id}/feedback`.
+O `/analyze` aceita `{"analysis_mode": "basic" | "full"}` (padrão `full`): a completa
+cruza slides e fala e exige áudio; a básica analisa só a fala, aceita transcrição, áudio
+ou os dois, e não tem cobertura (DECISOES §11). Que ação cada estado permite está numa
+tabela só: `domain/session_lifecycle.py`.
 A tarefa de fundo abre a **própria** sessão de banco (a do request já morreu).
 O Cliente VR pode mandar a fala **já transcrita no headset** (`PUT /{id}/transcript`),
 e aí o STT não roda (DECISOES §10). `GET /{id}/slides[/{n}]` serve as páginas em PNG
@@ -71,15 +82,17 @@ no `/audio` a invalida (DECISOES §9).
 docker compose up --build -d                      # podium_db + podium_api
 docker compose exec api alembic upgrade head
 docker compose exec api pip install -r requirements-dev.txt   # 1x por container
-docker compose exec api python -m pytest tests/   # 49 testes, sem rede/cota/banco
+docker compose exec api python -m pytest tests/   # 183 testes, sem rede/cota/banco
 docker compose exec api ruff check .
+docker compose exec api ruff format --check .        # "ruff format ." corrige
+docker compose exec api mypy                         # tipos (mypy.ini)
 ```
 
 - O Postgres local do dev ocupa a 5432 → o container publica em **5433:5432**. A API fala
   com `db:5432` pela rede do Compose; o `.env` usa `@db:5432`, **não** `localhost`.
 - Scripts de validação por parte (rodar no container, `python -m scripts.<nome>`):
-  `extrair_slides`, `analisar_audio`, `avaliar_cobertura`, `gerar_slides_fixture`;
-  fluxo real: `scripts/testar_fluxo.ps1` (host).
+  `extract_slides`, `analyze_audio`, `evaluate_coverage`, `generate_slides_fixture`;
+  fluxo real: `scripts/test_flow.ps1` (host).
 
 ## 5. Restrições do ambiente
 
@@ -107,18 +120,18 @@ nativa multimodal · métricas de forma independentes do STT · `202` + polling.
 
 ## 7. Contrato do marcador de slide (âncora de evidência de todo o sistema)
 
-Tudo mora em `app/domain/slides.py` — emitir (`bloco`, `montar`), normalizar
-(`normalizar`) e interpretar (`parse`, `MARCADOR_RE`). Formato exato:
+Tudo mora em `app/domain/slides.py` — emitir (`block`, `assemble`), normalizar
+(`normalize`) e interpretar (`parse`, `MARKER_RE`). Formato exato:
 `[Slide 1]\nConteúdo...\n\n[Slide 2]\n...` — colchetes, `S` maiúsculo, um espaço, número,
 `\n` após; separador `\n\n`. PDF e PPTx produzem saída idêntica (verificado).
 
 **Três armadilhas confirmadas:**
-1. `normalizar` colapsa `\n{3,}` em `\n\n` → o conteúdo de um slide pode conter `\n\n`.
+1. `normalize` colapsa `\n{3,}` em `\n\n` → o conteúdo de um slide pode conter `\n\n`.
    **Parse sempre pelo regex do marcador, nunca `split("\n\n")`.**
 2. Sem a âncora `^...$` surgem slides fantasma quando o texto *cita* "[Slide 7]" — por
-   isso `MARCADOR_RE = r"^\[Slide\s+(\d+)\]$"` com `re.MULTILINE`. E a âncora sozinha não
-   cobre a citação em linha própria: `slides.bloco` neutraliza na emissão
-   (`_neutralizar_marcadores`, recuo de um espaço). Texto extraído é dado, e dado não
+   isso `MARKER_RE = r"^\[Slide\s+(\d+)\]$"` com `re.MULTILINE`. E a âncora sozinha não
+   cobre a citação em linha própria: `slides.block` neutraliza na emissão
+   (`_neutralize_markers`, recuo de um espaço). Texto extraído é dado, e dado não
    forja a âncora.
 3. A numeração tem buracos legítimos (páginas sem texto são puladas): `{1, 2, 5}` é
    correto — não renumerar, não preencher.
@@ -137,7 +150,7 @@ Tudo mora em `app/domain/slides.py` — emitir (`bloco`, `montar`), normalizar
   detecta — recriar o tipo e reapontar a coluna (exemplo: `f4b1c9d2e370`).
 - **`docker compose restart` não relê o `.env`**: o `env_file` aplica na criação do
   container. Mudou o `.env` → `docker compose up -d api` (recria). Flagrado pela coluna
-  `modelo` da `llm_calls` (2026-08-30).
+  `model` (então `modelo`) da `llm_calls` (2026-08-30).
 
 ## 9. Invariantes de domínio
 
@@ -148,18 +161,23 @@ Tudo mora em `app/domain/slides.py` — emitir (`bloco`, `montar`), normalizar
 - **Degradar sem inventar**: zero perguntas validadas = COMPLETED com lista vazia e
   motivo em `content_analysis`. Nunca FAILED, nunca preencher com pergunta não validada.
 - **Métricas de forma independem do STT** — derivam do sinal.
-- **Toda pergunta é rastreável** até um trecho literal de um slide identificado.
+- **Toda pergunta é rastreável** até um trecho literal do material analisado — um slide
+  identificado ou a fala transcrita —, conferido mecanicamente contra a origem declarada.
 
 ## 10. Convenções de código
 
-- Português do Brasil em docstrings, comentários e mensagens de erro.
+- **Identificadores em inglês** — arquivos, módulos, classes, funções, variáveis, campos
+  da API, chaves do JSONB, valores de enum, colunas, nomes de teste. **Português do
+  Brasil** em comentários, docstrings, logs, mensagens da API e no texto do prompt.
+  Glossário em DECISOES §11 (banca → `panel`, aterramento → `grounding`...).
 - Docstrings explicam **por quê**, não o quê.
 - Nada de `print` no `app/`; usar o `logging` configurado em `main.py`.
 - Toda I/O assíncrona: SQLAlchemy async, `httpx.AsyncClient`, `aiofiles`.
 - Dependência nova: justificativa + versão fixada + **wheel ARM64 conferido** (§5).
 - Não renomear arquivos, endpoints ou colunas sem pedido explícito.
 - **Não criar migration do Alembic sem autorização** — mostrar o arquivo antes de aplicar.
-- Um assunto por commit. Mensagens em português, imperativo, minúsculas.
+- Um assunto por commit. Conventional Commits (`tipo(escopo): descrição`), descrição em
+  português, imperativo, minúsculas, sem acentos; corpo com o que entra e o porquê.
 
 ## 11. Protocolo de trabalho
 
@@ -184,3 +202,6 @@ Tudo mora em `app/domain/slides.py` — emitir (`bloco`, `montar`), normalizar
 4. **Validar o prompt de cada uma das 3 personas** em sessão real antes de afirmar no
    relatório.
 5. **Latência de geração**: medições reais (12,3 s / 15,9 s) acima da meta de p95 < 12 s.
+6. **Medir a análise básica contra a completa** em sessão real antes de afirmar que ela
+   é mais rápida: nas medições existentes o tamanho da entrada não explica a latência
+   (DECISOES §11).

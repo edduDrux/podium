@@ -1,22 +1,24 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
+from typing import Any, cast
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import update
+from sqlalchemy import CursorResult, update
 
+from app.adapters import storage
+from app.api.errors import register_error_handlers
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, engine
 from app.core.enums import PresentationStatus
 from app.models.presentation import Presentation
-from app.services import storage_service
 
 logging.basicConfig(level=logging.DEBUG if settings.DEBUG else logging.INFO)
 logger = logging.getLogger(__name__)
 
-INTERROMPIDA_POR_REINICIO = (
+INTERRUPTED_BY_RESTART = (
     "Análise interrompida pelo reinício do servidor. Chame /analyze novamente para "
     "reprocessar esta sessão."
 )
@@ -27,7 +29,9 @@ async def _storage_janitor() -> None:
     interval = settings.CLEANUP_INTERVAL_MINUTES * 60
     while True:
         try:
-            removed = storage_service.purge_expired()
+            # Varrer e apagar pastas é I/O de disco síncrono: numa thread, para não
+            # congelar as requisições a cada limpeza.
+            removed = await asyncio.to_thread(storage.purge_expired)
             if removed:
                 logger.info("Limpeza: %d pasta(s) de sessão removida(s).", removed)
         except Exception:
@@ -35,7 +39,7 @@ async def _storage_janitor() -> None:
         await asyncio.sleep(interval)
 
 
-async def _reconciliar_sessoes_interrompidas() -> None:
+async def _reconcile_interrupted_sessions() -> None:
     """Marca como `failed` as sessões que ficaram presas em `processing`.
 
     A análise roda em `BackgroundTasks`, dentro do processo: se ele morre no meio — e com
@@ -47,20 +51,23 @@ async def _reconciliar_sessoes_interrompidas() -> None:
     estiver `processing` aqui é necessariamente resíduo de uma execução anterior.
     """
     async with AsyncSessionLocal() as db:
-        resultado = await db.execute(
+        result = await db.execute(
             update(Presentation)
             .where(Presentation.status == PresentationStatus.PROCESSING)
             .values(
                 status=PresentationStatus.FAILED,
-                error_message=INTERROMPIDA_POR_REINICIO,
+                error_message=INTERRUPTED_BY_RESTART,
             )
         )
         await db.commit()
 
-    if resultado.rowcount:
+    # O `execute` é tipado como `Result` genérico; num UPDATE o objeto é um `CursorResult`,
+    # que é quem tem `rowcount`.
+    reconciled = cast(CursorResult[Any], result).rowcount
+    if reconciled:
         logger.warning(
             "%d sessão(ões) presa(s) em 'processing' foram reconciliadas como 'failed'.",
-            resultado.rowcount,
+            reconciled,
         )
 
 
@@ -69,7 +76,7 @@ async def lifespan(app: FastAPI):
     settings.storage_path.mkdir(parents=True, exist_ok=True)
 
     try:
-        await _reconciliar_sessoes_interrompidas()
+        await _reconcile_interrupted_sessions()
     except Exception:
         # Banco indisponível na subida não deve impedir a API de servir /health.
         logger.exception("Não foi possível reconciliar as sessões interrompidas.")
@@ -107,6 +114,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+register_error_handlers(app)
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
 

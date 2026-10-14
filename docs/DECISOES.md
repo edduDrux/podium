@@ -304,3 +304,128 @@ vazia.
 (`test_transcript_service.py`, `test_slide_render_service.py`). Uma armadilha achada
 ao rodar: aberto como documento, um PNG é medido em PONTOS a 72 dpi, então uma imagem de
 400 px aparece como 300 — a verificação de tamanho tem de usar `fitz.Pixmap`.
+
+## 11. Reestruturação guiada (2026-10-12)
+
+Em 2026-10-10 o autor cogitou reescrever o backend do zero, por não se reconhecer no
+código (nomes vagos, mistura de português e inglês, papéis misturados em `services/`).
+Uma análise com as skills do projeto (`padroes-arquitetura-python`, `codebase-design`,
+`fastapi-boas-praticas`) mostrou que a base segue os padrões do *Architecture Patterns
+with Python* e que os problemas se concentram nas costuras entre módulos. A decisão foi
+**refatorar o código atual, módulo a módulo**, com os 72 testes como rede de segurança.
+As decisões abaixo saíram de três rodadas de `/grill-me` com o autor.
+
+**Achados que motivaram o plano (verificados em 2026-10-12):**
+
+- `GET /feedback` devolvia **200 vazio antes da análise** (reproduzido na API local:
+  `/init` → `PUT /transcript` → `GET /feedback` com a sessão em `created`), resposta
+  idêntica a uma análise concluída sem perguntas aprovadas.
+- `/audio` aceitava áudio com a sessão em `processing` e devolvia o status a
+  `audio_received`, reabrindo a porta para uma segunda análise simultânea.
+- PyMuPDF, python-pptx e pydub eram chamados direto no event loop em 4 pontos; cada
+  análise decodifica o mesmo áudio três vezes.
+- A porta `BancaExaminadora` escondia prompt, parse e **aterramento** dentro do adaptador
+  do Gemini: o dublê de teste substituía o núcleo científico junto, e nenhum teste do
+  pipeline passava pelo aterramento.
+- A imagem Docker em uso vinha de outro Dockerfile: a API estava fora do ar havia 36 h e
+  a suíte não coletava (`No module named 'pydub'`). Resolvido com `docker compose up --build`.
+
+**Etapas, nesta ordem** (um commit por item; pausa para revisão ao fim de cada etapa):
+
+1. Defeitos (`GET /feedback` → 409 fora de `completed`; `/audio` → 409 em `processing`;
+   código bloqueante fora do event loop) e limpeza (código morto, defaults de modelo e
+   `DEBUG`).
+2. Rede de segurança: `ruff format` + checagem no CI, mypy, build da imagem no CI, testes
+   de API com `httpx` + `ASGITransport` e `dependency_overrides`, **sem banco**.
+3. Renomeação para inglês e separação de `app/` em `domain/`, `adapters/` e `services/`
+   (casos de uso), com migration escrita à mão que preserva as 27 chamadas medidas em
+   `llm_calls`.
+4. Banca: a porta passa a ser o transporte (`LanguageModel.complete`); prompt, parse e
+   aterramento vão para o domínio; personas configuráveis; tipos próprios do domínio;
+   provedor informado à auditoria.
+5. Ciclo de vida da sessão numa tabela de estados × ações; casos de uso fora dos
+   endpoints; formato do feedback gravado num único módulo.
+6. Modos de análise `basic` e `full`.
+7. Documentação do contrato da API para o cliente Unity.
+
+**Convenção de nomes.** Identificadores em inglês (arquivos, classes, funções, campos da
+API, chaves do JSONB, valores de enum, colunas); comentários, docstrings, logs, mensagens
+da API e o texto do prompt em português. Glossário:
+
+| Português | Inglês |
+|---|---|
+| banca examinadora | `panel` |
+| pergunta / justificativa | `question` / `rationale` |
+| aterramento / trecho literal / slide de origem | `grounding` / `quote` / `slide_number` |
+| cobertura de slides / alerta de descolamento | `slide_coverage` / `mismatch_alert` |
+| apresentado / parcial / não apresentado / sem termos | `presented` / `partial` / `not_presented` / `no_terms` |
+| métricas de forma / análise de conteúdo | `delivery_metrics` / `content_analysis` |
+| truncado / origem da transcrição / auditoria / limiar | `truncated` / `transcript_source` / `audit` / `threshold` |
+| professor rigoroso / orientador acolhedor / especialista técnico | `strict_professor` / `supportive_advisor` / `technical_expert` |
+| análise básica / completa | `analysis_mode`: `basic` / `full` |
+
+**Personas.** Cada uma configura papel, foco, tom e número de perguntas. Temperatura,
+modelo e a estrutura dos insumos ficam **iguais para todas**: variar a temperatura por
+persona misturaria estilo com aleatoriedade na comparação entre personas do relatório.
+Prompt final = modelo do modo + bloco da persona (2 modelos × 3 blocos). O texto de cada
+bloco é redigido na etapa 4 e aprovado pelo autor.
+
+**Modos de análise** (escolhidos no corpo do `/analyze`, padrão `full`, gravados numa
+coluna `analysis_mode` em `feedbacks`):
+
+- `full` — o que existe hoje: slides + fala, cobertura, métricas de forma; áudio
+  obrigatório.
+- `basic` — perguntas só sobre a fala, sem slides no prompt e sem cobertura. Aceita
+  transcrição, áudio ou os dois: havendo transcrição, o STT não roda; só com áudio, o STT
+  roda antes do LLM; métricas de forma só quando há áudio. O `/init` continua exigindo o
+  arquivo de slides.
+- **Aterramento obrigatório nos dois modos.** O trecho literal (`quote`) é evidência
+  interna, conferida mecanicamente contra a origem declarada (`source`: `slides` ou
+  `speech`); o texto da pergunta é natural ("No slide 4 você apresentou…", "Você comentou
+  que…"). No `full`, perguntas podem se ancorar nos slides ou na fala.
+- **Ganho de tempo a medir antes de afirmar.** Nas 27 chamadas registradas, o tamanho da
+  entrada (1k × 3k tokens) não explica a latência da geração (12,6–86,2 s); o STT domina
+  (85–179 s para 7,3 min de fala) e já é pulado quando o headset envia a transcrição, nos
+  dois modos.
+
+### 11.1 Fechamento (2026-10-13)
+
+As 7 etapas foram concluídas em 38 commits na branch `reestruturacao`, de `050653e`
+(skills) a esta nota. A suíte foi de 72 para 183 testes, todos sem rede, sem cota e sem
+banco; `ruff check`, `ruff format --check` e `mypy` (em `app/` e `scripts/`) passam
+limpos, e a CI monta a imagem em amd64 e arm64.
+
+**Como foi verificado.** As duas migrations (`3d9a6f2c8b14`, renomeação para inglês com
+conversão dos dados do JSONB; `c5e2a8f41b97`, coluna `analysis_mode`) rodaram num clone
+do banco de desenvolvimento (`podium_check`, via `pg_dump`): `upgrade` → `downgrade` →
+`upgrade`, com o `downgrade` devolvendo os dados byte a byte. Os endpoints foram
+exercitados numa segunda instância da API (porta 8001) apontada para o clone, sem chamar
+o Gemini. Os comandos de validação dos guias de `docs/partes/` e do README foram
+executados um a um no container.
+
+**Desvios do plano:**
+
+- A porta da banca ficou `LanguageModel.complete(system, user, presentation_id)`, sem
+  temperatura: ela é a mesma para todas as personas, então o adaptador a recebe na
+  construção (`bootstrap.py`) e a porta não precisa carregá-la.
+- A etapa 7 virou o próprio OpenAPI, e não um documento à parte: `documented(...)` em
+  `api/errors.py` monta o `responses=` de cada endpoint a partir da mesma tabela que
+  produz o status, e `tests/api/test_openapi.py` confere que os dois não divergem. O
+  `/docs` é o contrato que o cliente Unity vai ler.
+- `1c8f0a0` é uma quebra de contrato (valores e chaves em inglês). Não afeta ninguém
+  porque o Cliente VR ainda não existe; os feedbacks antigos são convertidos pela
+  migration e continuam legíveis.
+- Sem a entrada que o modo exige, o `/analyze` recusa com **409**, não 422: a sessão
+  existe, mas ainda não recebeu o que o modo pede (mesma família do "fora de ordem").
+
+**Pendências que dependem do autor:**
+
+1. **Aplicar as migrations no banco de desenvolvimento**
+   (`docker compose exec api alembic upgrade head`). Até lá, o código novo roda contra o
+   esquema antigo (`f4b1c9d2e370`): colunas de `llm_calls`, rótulos dos enums e a coluna
+   `feedbacks.analysis_mode` não batem com os models.
+2. **Aprovar o texto das 3 personas** (`app/domain/personas.py`): são rascunhos.
+3. **Validar em sessão real** o prompt da análise completa (mudou: origem `speech`) e o
+   da básica (novo). Gasta cota.
+4. **Medir a básica contra a completa** antes de afirmar ganho de tempo
+   (`scripts/test_flow.ps1 -AnalysisMode basic`).
