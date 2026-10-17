@@ -92,6 +92,9 @@ métricas, a taxa de aterramento e as perguntas com a evidência de cada uma.
 | `GET` | `/api/v1/presentations/{session_id}/slides/{number}` | Uma página em **PNG** (`width?`), para a tela da sala no headset. Só PDF. |
 | `GET` | `/api/v1/health` | Liveness + checagem do banco. |
 | `GET` | `/api/v1/personas` | As personas da banca (`id`, `label`, `description`), na ordem do enum, para o Cliente VR montar a escolha. |
+| `POST` | `/api/v1/pairings` | Cria um código de 6 dígitos (validade de `PAIRING_TTL_MINUTES`, 10 min) para enviar a apresentação de outro aparelho. Retorna `code`, `expires_at` e `upload_page_url`. |
+| `POST` | `/api/v1/pairings/{code}/file` | Recebe a apresentação para o código (`multipart/form-data`, `file`), com a mesma conferência do `/init`. Um novo envio substitui o anterior. |
+| `GET` | `/api/v1/pairings/{code}` | Situação do código: `waiting` ou `received` (com `filename` e `file_type`). `404` se não existe ou venceu. |
 
 ### Fluxo assíncrono do `/analyze`
 

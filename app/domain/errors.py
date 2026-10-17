@@ -84,3 +84,10 @@ class NotRenderableError(DomainError):
 
 class PageNotFoundError(DomainError):
     """Pediram uma página fora da apresentação."""
+
+
+# --- Pareamento (envio da apresentação pelo celular) -------------------------------------
+
+
+class PairingNotFoundError(DomainError):
+    """O código de pareamento não existe ou já venceu."""

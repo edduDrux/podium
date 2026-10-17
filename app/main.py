@@ -1,13 +1,14 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import CursorResult, update
 
-from app.adapters import storage
+from app.adapters import pairing_store, storage
 from app.api.errors import register_error_handlers
 from app.api.v1.router import api_router
 from app.core.config import settings
@@ -34,6 +35,9 @@ async def _storage_janitor() -> None:
             removed = await asyncio.to_thread(storage.purge_expired)
             if removed:
                 logger.info("Limpeza: %d pasta(s) de sessão removida(s).", removed)
+            pairings = await asyncio.to_thread(pairing_store.purge_expired, datetime.now(UTC))
+            if pairings:
+                logger.info("Limpeza: %d pareamento(s) vencido(s) removido(s).", pairings)
         except Exception:
             logger.exception("Falha na limpeza do armazenamento.")
         await asyncio.sleep(interval)

@@ -74,6 +74,11 @@ class Settings(BaseSettings):
     STORAGE_RETENTION_HOURS: int = 24
     CLEANUP_INTERVAL_MINUTES: int = 60
 
+    # --- Pareamento (envio da apresentação pelo celular para o headset) ---
+    # Curto de propósito: sem autenticação, a validade do código é o que limita o envio a
+    # quem está vendo o headset. Dez minutos bastam para abrir a página e escolher o PDF.
+    PAIRING_TTL_MINUTES: int = 10
+
     @property
     def storage_path(self) -> Path:
         path = Path(self.STORAGE_DIR)

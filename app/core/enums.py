@@ -27,6 +27,13 @@ class SourceFileType(StrEnum):
     PPTX = "pptx"
 
 
+class PairingStatus(StrEnum):
+    """Situação de um código de pareamento: esperando o arquivo ou com ele recebido."""
+
+    WAITING = "waiting"
+    RECEIVED = "received"
+
+
 class LLMCallStage(StrEnum):
     """Etapa do pipeline que originou a chamada de IA.
 

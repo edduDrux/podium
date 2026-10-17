@@ -13,6 +13,7 @@ não usar" do Architecture Patterns with Python).
 import asyncio
 import logging
 import uuid
+from pathlib import Path
 from typing import Any, NamedTuple, cast
 
 from sqlalchemy import CursorResult, update
@@ -20,7 +21,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters import audio, presentation_files, storage
 from app.core.config import settings
-from app.core.enums import AnalysisMode, PersonaType, PresentationStatus, ScenarioType
+from app.core.enums import (
+    AnalysisMode,
+    PersonaType,
+    PresentationStatus,
+    ScenarioType,
+    SourceFileType,
+)
 from app.domain import session_lifecycle
 from app.domain.errors import (
     ActionNotAllowedError,
@@ -50,23 +57,28 @@ class AudioReceipt(NamedTuple):
     duration_seconds: float | None
 
 
-async def start_session(
-    db: AsyncSession,
+class IngestedFile(NamedTuple):
+    path: Path
+    file_type: SourceFileType
+    slides_text: str
+
+
+async def ingest_presentation(
     upload: storage.Upload,
     filename: str | None,
     content_type: str | None,
-    persona: PersonaType,
-    scenario: ScenarioType,
-    user_id: uuid.UUID | None,
-) -> Presentation:
-    """Cria a sessão a partir da apresentação enviada e extrai o texto dos slides."""
+    directory: Path,
+) -> IngestedFile:
+    """Grava a apresentação em `directory` e confere formato, tamanho, leitura e texto.
+
+    Uma função só para as duas portas de entrada — o `/init` e o envio pelo pareamento —,
+    para que as duas recusem exatamente as mesmas coisas, com as mesmas mensagens.
+    """
     file_type = presentation_files.detect_type(filename, content_type)
     if file_type is None:
         raise UnsupportedFileTypeError("Apenas arquivos PDF ou PPTx são aceitos.")
 
-    session_id = uuid.uuid4()
-    file_name = f"presentation{presentation_files.extension_for(file_type)}"
-    file_path = storage.session_dir(session_id) / file_name
+    file_path = directory / f"presentation{presentation_files.extension_for(file_type)}"
 
     await storage.save_upload(upload, file_path, max_bytes=settings.max_upload_size_bytes)
 
@@ -88,16 +100,34 @@ async def start_session(
             "novamente."
         )
 
+    return IngestedFile(file_path, file_type, slides_text)
+
+
+async def start_session(
+    db: AsyncSession,
+    upload: storage.Upload,
+    filename: str | None,
+    content_type: str | None,
+    persona: PersonaType,
+    scenario: ScenarioType,
+    user_id: uuid.UUID | None,
+) -> Presentation:
+    """Cria a sessão a partir da apresentação enviada e extrai o texto dos slides."""
+    session_id = uuid.uuid4()
+    ingested = await ingest_presentation(
+        upload, filename, content_type, storage.session_dir(session_id)
+    )
+
     presentation = Presentation(
         id=session_id,
         user_id=user_id,
         scenario=scenario,
         persona=persona,
         status=PresentationStatus.CREATED,
-        file_path=str(file_path),
-        file_filename=filename or file_name,
-        file_type=file_type,
-        slides_text=slides_text,
+        file_path=str(ingested.path),
+        file_filename=filename or ingested.path.name,
+        file_type=ingested.file_type,
+        slides_text=ingested.slides_text,
     )
     db.add(presentation)
     await db.commit()

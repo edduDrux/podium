@@ -445,3 +445,27 @@ valores do enum escritos no app.
 - **Sem banco e sem migration:** a lista sai da mesma tabela que monta o prompt.
 - **Textos de exibição aprovados pelo autor** em 2026-10-17, depois de vê-los no headset
   (simulador). Os textos do prompt (`role`, `focus`, `tone`) seguem na pendência 2 da §11.1.
+
+## 13. Pareamento para enviar a apresentação (2026-10-17)
+
+Segunda mudança pedida pelo Cliente VR (Fase 6A do plano dele). No Quest não há seletor de
+arquivos prático, e o `/init` exigia o arquivo na mesma chamada que a persona. Agora o
+headset pede um código, mostra-o na sala, e o arquivo chega de outro aparelho.
+
+- **Rotas:** `POST /pairings` (cria o código), `POST /pairings/{code}/file` (recebe o
+  arquivo), `GET /pairings/{code}` (o headset consulta até chegar). Código de 6 dígitos de
+  `secrets`, validade de `PAIRING_TTL_MINUTES` (10 min). Inexistente e vencido dão o mesmo
+  `404` (`PairingNotFoundError`): para quem envia, a saída é a mesma, gerar outro código.
+- **Mesma conferência do `/init`:** a ingestão virou `session_service.ingest_presentation`,
+  usada pelas duas portas. Quem envia pelo celular vê a recusa (415, 413, 422) na hora, e não
+  quando o headset tentasse iniciar a sessão.
+- **Estado em disco, não em memória:** `storage/_pairings/<código>/` com o arquivo e um
+  `pairing.json`. Sobrevive ao `--reload`, não exige migration. O `_` mantém a pasta fora
+  da limpeza de sessões (que só apaga nomes de UUID); a limpeza periódica ganhou
+  `pairing_store.purge_expired`.
+- **`upload_page_url`** é montada a partir do endereço que o headset usou para chamar a API
+  (`request.base_url`): no Quest é o IP do PC na rede, o mesmo que o celular alcança. A API
+  não precisa saber o próprio IP.
+- **Segurança:** sem autenticação (§6 do CLAUDE.md), o código curto e de validade curta é o
+  que limita o envio a quem está vendo o headset. O código vira nome de pasta e é validado
+  (`pairing.is_well_formed`: seis dígitos ASCII) antes de tocar no disco.

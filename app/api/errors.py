@@ -22,6 +22,7 @@ from app.domain.errors import (
     NoSpeechError,
     NotRenderableError,
     PageNotFoundError,
+    PairingNotFoundError,
     UndecodableAudioError,
     UnreadableFileError,
     UnsupportedFileTypeError,
@@ -36,6 +37,8 @@ STATUS_BY_ERROR: dict[type[DomainError], int] = {
     MixedChunkFormatsError: status.HTTP_409_CONFLICT,
     # 404: a sessão existe, a página pedida não.
     PageNotFoundError: status.HTTP_404_NOT_FOUND,
+    # 404: o código de pareamento nunca existiu ou já venceu (para quem envia, dá no mesmo).
+    PairingNotFoundError: status.HTTP_404_NOT_FOUND,
     # 413: grande demais — em bytes ou em minutos.
     FileTooLargeError: status.HTTP_413_CONTENT_TOO_LARGE,
     AudioTooLongError: status.HTTP_413_CONTENT_TOO_LARGE,
