@@ -443,5 +443,5 @@ valores do enum escritos no app.
   português, sem efeito no prompt: `block()` continua usando só `role`, `focus` e `tone`).
   O endpoint devolve `list[PersonaResponse {id, label, description}]` na ordem do enum.
 - **Sem banco e sem migration:** a lista sai da mesma tabela que monta o prompt.
-- **Pendência do autor:** os textos de exibição são rascunho, como os do prompt
-  (pendência 2 da §11.1); aprovar junto.
+- **Textos de exibição aprovados pelo autor** em 2026-10-17, depois de vê-los no headset
+  (simulador). Os textos do prompt (`role`, `focus`, `tone`) seguem na pendência 2 da §11.1.
