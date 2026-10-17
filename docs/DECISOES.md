@@ -429,3 +429,19 @@ executados um a um no container.
    da básica (novo). Gasta cota.
 4. **Medir a básica contra a completa** antes de afirmar ganho de tempo
    (`scripts/test_flow.ps1 -AnalysisMode basic`).
+
+## 12. Lista de personas para o Cliente VR (2026-10-17)
+
+Primeira das duas mudanças pedidas pelo Cliente VR (`podium-vr`, Fase 5A do plano dele): o
+headset monta a escolha de persona a partir de `GET /api/v1/personas`, em vez de ter os
+valores do enum escritos no app.
+
+- **Por quê na API:** a API já é a dona das personas (`domain/personas.py`). Se o app
+  guardasse a lista, criar ou renomear uma persona exigiria build e reinstalação no Quest,
+  e as duas cópias poderiam divergir.
+- **O que mudou:** `PersonaProfile` ganhou `label` e `description` (textos de exibição em
+  português, sem efeito no prompt: `block()` continua usando só `role`, `focus` e `tone`).
+  O endpoint devolve `list[PersonaResponse {id, label, description}]` na ordem do enum.
+- **Sem banco e sem migration:** a lista sai da mesma tabela que monta o prompt.
+- **Pendência do autor:** os textos de exibição são rascunho, como os do prompt
+  (pendência 2 da §11.1); aprovar junto.

@@ -21,6 +21,10 @@ from app.core.enums import PersonaType
 
 
 class PersonaProfile(NamedTuple):
+    # Como a persona aparece para quem escolhe no Cliente VR (`GET /personas`). Fica aqui,
+    # e não no app, para que mudar ou criar uma persona não exija um build novo no headset.
+    label: str
+    description: str
     # Quem a persona é — vira "Sua persona nesta sessão: ...".
     role: str
     # O que ela cobra do apresentador.
@@ -34,6 +38,11 @@ class PersonaProfile(NamedTuple):
 
 PROFILES: dict[PersonaType, PersonaProfile] = {
     PersonaType.STRICT_PROFESSOR: PersonaProfile(
+        label="Professor rigoroso",
+        description=(
+            "Cobra precisão conceitual e rigor metodológico, e aponta afirmações sem base "
+            "no material. Direto e exigente."
+        ),
         role="um professor examinador rigoroso",
         focus=(
             "precisão conceitual, rigor metodológico e afirmações feitas sem embasamento "
@@ -43,6 +52,11 @@ PROFILES: dict[PersonaType, PersonaProfile] = {
         question_count=8,
     ),
     PersonaType.SUPPORTIVE_ADVISOR: PersonaProfile(
+        label="Orientador acolhedor",
+        description=(
+            "Ajuda a aprofundar o raciocínio, explora as limitações que você reconhece e os "
+            "próximos passos do trabalho. Construtivo e encorajador."
+        ),
         role="um orientador acolhedor",
         focus=(
             "aprofundar o raciocínio de quem apresenta, as limitações que a própria "
@@ -52,6 +66,11 @@ PROFILES: dict[PersonaType, PersonaProfile] = {
         question_count=8,
     ),
     PersonaType.TECHNICAL_EXPERT: PersonaProfile(
+        label="Especialista técnico",
+        description=(
+            "Pergunta sobre detalhes de implementação, limitações técnicas e decisões de "
+            "projeto. Técnico e objetivo."
+        ),
         role="um especialista técnico da área",
         focus="detalhes de implementação, limitações técnicas e decisões de projeto",
         tone="técnico e objetivo",

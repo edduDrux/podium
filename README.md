@@ -91,6 +91,7 @@ métricas, a taxa de aterramento e as perguntas com a evidência de cada uma.
 | `GET` | `/api/v1/presentations/{session_id}/slides` | Quantas páginas o servidor consegue desenhar desta apresentação. |
 | `GET` | `/api/v1/presentations/{session_id}/slides/{number}` | Uma página em **PNG** (`width?`), para a tela da sala no headset. Só PDF. |
 | `GET` | `/api/v1/health` | Liveness + checagem do banco. |
+| `GET` | `/api/v1/personas` | As personas da banca (`id`, `label`, `description`), na ordem do enum, para o Cliente VR montar a escolha. |
 
 ### Fluxo assíncrono do `/analyze`
 
@@ -107,7 +108,8 @@ GET  /feedback ->  Feedback Duplo completo
 Chamar `/analyze` de novo enquanto está `processing` devolve `409`, e enviar áudio ou
 transcrição durante a análise também.
 
-Personas disponíveis: `strict_professor` · `supportive_advisor` · `technical_expert`
+Personas disponíveis (a lista com nome e descrição vem do `GET /api/v1/personas`):
+`strict_professor` · `supportive_advisor` · `technical_expert`
 
 ## Stack
 
