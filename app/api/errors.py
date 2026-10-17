@@ -23,6 +23,8 @@ from app.domain.errors import (
     NotRenderableError,
     PageNotFoundError,
     PairingNotFoundError,
+    PairingNotReadyError,
+    PresentationSourceError,
     UndecodableAudioError,
     UnreadableFileError,
     UnsupportedFileTypeError,
@@ -35,6 +37,8 @@ STATUS_BY_ERROR: dict[type[DomainError], int] = {
     NoAudioError: status.HTTP_409_CONFLICT,
     NoSpeechError: status.HTTP_409_CONFLICT,
     MixedChunkFormatsError: status.HTTP_409_CONFLICT,
+    # 409: o código existe, mas o arquivo ainda não chegou (mesma família do "fora de ordem").
+    PairingNotReadyError: status.HTTP_409_CONFLICT,
     # 404: a sessão existe, a página pedida não.
     PageNotFoundError: status.HTTP_404_NOT_FOUND,
     # 404: o código de pareamento nunca existiu ou já venceu (para quem envia, dá no mesmo).
@@ -48,6 +52,8 @@ STATUS_BY_ERROR: dict[type[DomainError], int] = {
     # 422: o formato é aceito, mas o conteúdo não serve.
     UnreadableFileError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     NoExtractableTextError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    # 422: o pedido do /init veio sem origem da apresentação, ou com as duas.
+    PresentationSourceError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     UndecodableAudioError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     EmptyTranscriptError: status.HTTP_422_UNPROCESSABLE_CONTENT,
 }

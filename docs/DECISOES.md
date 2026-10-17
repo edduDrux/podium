@@ -475,3 +475,12 @@ headset pede um código, mostra-o na sala, e o arquivo chega de outro aparelho.
   e limite de tamanho). O envio usa a própria rota da API, então as recusas aparecem na
   página com o mesmo `detail`. Verificado no navegador em largura de celular: envio de PDF,
   `.txt` recusado (415), código inexistente (404) e código malformado (validado na página).
+- **`/init` com `pairing_code`:** alternativa a `file`, exatamente um dos dois
+  (`PresentationSourceError`, 422). Código esperando arquivo dá `409`
+  (`PairingNotReadyError`, mesma família do "fora de ordem"); inexistente ou vencido, `404`.
+  O arquivo muda da pasta do código para a da sessão e o código é apagado **depois** do
+  commit: se a gravação falhar, o headset ainda vê o código e pode gerar outro. A
+  conferência do arquivo saiu do `session_service` para `services/presentation_intake.py`,
+  que as duas portas usam sem uma importar a outra. Fluxo real verificado contra o banco
+  de desenvolvimento: código → envio → `/init` → sessão `created` com 2 slides desenháveis
+  → código `404`.

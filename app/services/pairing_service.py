@@ -1,8 +1,8 @@
 """Casos de uso do pareamento: criar o código, receber o arquivo e consultar a situação.
 
 O arquivo que chega por aqui passa pela mesma conferência do `/init`
-(`session_service.ingest_presentation`): quem envia pelo celular vê a recusa na hora, na
-página, e não minutos depois, quando o headset tentasse iniciar a sessão.
+(`presentation_intake`): quem envia pelo celular vê a recusa na hora, na página, e não
+minutos depois, quando o headset tentasse iniciar a sessão.
 """
 
 from datetime import UTC, datetime
@@ -13,7 +13,7 @@ from app.core.enums import PairingStatus
 from app.domain import pairing as pairing_rules
 from app.domain.errors import PairingNotFoundError
 from app.domain.pairing import Pairing
-from app.services import session_service
+from app.services import presentation_intake
 
 NOT_FOUND = "O código de pareamento não existe ou já venceu. Gere um novo código no headset."
 
@@ -56,7 +56,7 @@ async def receive_file(
     pairing = await get_pairing(code)
 
     pairing_store.remove_file(code)
-    ingested = await session_service.ingest_presentation(
+    ingested = await presentation_intake.ingest_presentation(
         upload, filename, content_type, pairing_store.pairing_dir(code)
     )
 

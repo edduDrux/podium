@@ -32,10 +32,13 @@ def test_every_domain_error_has_a_status():
 def test_init_documents_each_refusal(schema):
     responses = _responses(schema, "/init", "post")
 
-    assert {"201", "413", "415", "422"} <= set(responses)
+    assert {"201", "404", "409", "413", "415", "422"} <= set(responses)
     assert "Apenas" not in responses["415"]["description"]  # motivo vem da docstring
     assert "PDF nem PPTx" in responses["415"]["description"]
-    assert "404" not in responses  # /init não recebe sessão
+    # O /init não recebe sessão: o 404 e o 409 dele são só os do código de pareamento.
+    assert "sessão não existe" not in responses["404"]["description"]
+    assert "pareamento" in responses["404"]["description"]
+    assert "pareamento" in responses["409"]["description"]
 
 
 def test_analyze_documents_both_modes_refusals(schema):

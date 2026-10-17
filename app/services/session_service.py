@@ -12,21 +12,21 @@ não usar" do Architecture Patterns with Python).
 
 import asyncio
 import logging
+import shutil
 import uuid
-from pathlib import Path
 from typing import Any, NamedTuple, cast
 
 from sqlalchemy import CursorResult, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.adapters import audio, presentation_files, storage
+from app.adapters import audio, pairing_store, presentation_files, storage
 from app.core.config import settings
 from app.core.enums import (
     AnalysisMode,
+    PairingStatus,
     PersonaType,
     PresentationStatus,
     ScenarioType,
-    SourceFileType,
 )
 from app.domain import session_lifecycle
 from app.domain.errors import (
@@ -35,17 +35,16 @@ from app.domain.errors import (
     EmptyTranscriptError,
     MixedChunkFormatsError,
     NoAudioError,
-    NoExtractableTextError,
     NoSpeechError,
+    PairingNotFoundError,
+    PairingNotReadyError,
     UndecodableAudioError,
-    UnreadableFileError,
-    UnsupportedFileTypeError,
 )
 from app.domain.session_lifecycle import Action
 from app.domain.text import clean_transcript
 from app.models.feedback import Feedback
 from app.models.presentation import Presentation
-from app.services import feedback_record
+from app.services import feedback_record, pairing_service, presentation_intake
 
 logger = logging.getLogger(__name__)
 
@@ -55,52 +54,6 @@ class AudioReceipt(NamedTuple):
     # None quando o áudio não pôde ser decodificado no upload (a duração é conferida de
     # novo no /analyze) ou quando é só mais um chunk.
     duration_seconds: float | None
-
-
-class IngestedFile(NamedTuple):
-    path: Path
-    file_type: SourceFileType
-    slides_text: str
-
-
-async def ingest_presentation(
-    upload: storage.Upload,
-    filename: str | None,
-    content_type: str | None,
-    directory: Path,
-) -> IngestedFile:
-    """Grava a apresentação em `directory` e confere formato, tamanho, leitura e texto.
-
-    Uma função só para as duas portas de entrada — o `/init` e o envio pelo pareamento —,
-    para que as duas recusem exatamente as mesmas coisas, com as mesmas mensagens.
-    """
-    file_type = presentation_files.detect_type(filename, content_type)
-    if file_type is None:
-        raise UnsupportedFileTypeError("Apenas arquivos PDF ou PPTx são aceitos.")
-
-    file_path = directory / f"presentation{presentation_files.extension_for(file_type)}"
-
-    await storage.save_upload(upload, file_path, max_bytes=settings.max_upload_size_bytes)
-
-    # PyMuPDF e python-pptx são síncronos: no event loop, um deck grande congelaria as
-    # outras requisições durante a leitura.
-    if not await asyncio.to_thread(presentation_files.is_valid, file_path, file_type):
-        file_path.unlink(missing_ok=True)
-        raise UnreadableFileError(f"Não foi possível ler o arquivo {file_type.upper()} enviado.")
-
-    slides_text = await asyncio.to_thread(presentation_files.extract_text, file_path, file_type)
-
-    if not presentation_files.has_extractable_text(slides_text):
-        file_path.unlink(missing_ok=True)
-        raise NoExtractableTextError(
-            f"O arquivo {file_type.upper()} foi lido, mas quase não tem texto "
-            "extraível — as páginas parecem ser apenas imagens. A análise de conteúdo "
-            "depende do texto dos slides. Exporte a apresentação preservando a camada "
-            "de texto ('Salvar como PDF', em vez de imprimir ou digitalizar) e envie "
-            "novamente."
-        )
-
-    return IngestedFile(file_path, file_type, slides_text)
 
 
 async def start_session(
@@ -114,7 +67,7 @@ async def start_session(
 ) -> Presentation:
     """Cria a sessão a partir da apresentação enviada e extrai o texto dos slides."""
     session_id = uuid.uuid4()
-    ingested = await ingest_presentation(
+    ingested = await presentation_intake.ingest_presentation(
         upload, filename, content_type, storage.session_dir(session_id)
     )
 
@@ -131,6 +84,57 @@ async def start_session(
     )
     db.add(presentation)
     await db.commit()
+    return presentation
+
+
+async def start_session_from_pairing(
+    db: AsyncSession,
+    code: str,
+    persona: PersonaType,
+    scenario: ScenarioType,
+    user_id: uuid.UUID | None,
+) -> Presentation:
+    """Cria a sessão com o arquivo que chegou pelo pareamento e encerra o pareamento.
+
+    O arquivo já passou pela conferência quando chegou (`pairing_service.receive_file`);
+    aqui ele só muda de pasta, e o texto é extraído de novo para a sessão.
+    """
+    pairing = await pairing_service.get_pairing(code)
+    if pairing.status is not PairingStatus.RECEIVED or pairing.file_type is None:
+        raise PairingNotReadyError(
+            "O código de pareamento ainda não recebeu nenhum arquivo. Envie a apresentação "
+            "pela página de envio e tente de novo."
+        )
+
+    session_id = uuid.uuid4()
+    source = pairing_store.file_path(code, pairing.file_type)
+    file_path = storage.session_dir(session_id) / source.name
+    try:
+        await asyncio.to_thread(shutil.move, source, file_path)
+    except FileNotFoundError:
+        # Outro /init usou o mesmo código um instante antes.
+        raise PairingNotFoundError(pairing_service.NOT_FOUND) from None
+
+    slides_text = await asyncio.to_thread(
+        presentation_files.extract_text, file_path, pairing.file_type
+    )
+
+    presentation = Presentation(
+        id=session_id,
+        user_id=user_id,
+        scenario=scenario,
+        persona=persona,
+        status=PresentationStatus.CREATED,
+        file_path=str(file_path),
+        file_filename=pairing.filename or file_path.name,
+        file_type=pairing.file_type,
+        slides_text=slides_text,
+    )
+    db.add(presentation)
+    await db.commit()
+    # Só depois do commit: se a gravação falhar, o código continua existindo para o
+    # headset ver o erro e gerar outro.
+    pairing_store.delete(code)
     return presentation
 
 

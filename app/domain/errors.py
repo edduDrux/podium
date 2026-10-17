@@ -91,3 +91,11 @@ class PageNotFoundError(DomainError):
 
 class PairingNotFoundError(DomainError):
     """O código de pareamento não existe ou já venceu."""
+
+
+class PairingNotReadyError(DomainError):
+    """O código de pareamento existe, mas ainda não recebeu o arquivo."""
+
+
+class PresentationSourceError(DomainError):
+    """O `/init` precisa de exatamente uma origem: o arquivo ou o código de pareamento."""

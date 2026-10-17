@@ -82,7 +82,7 @@ métricas, a taxa de aterramento e as perguntas com a evidência de cada uma.
 
 | Método | Rota | Ação |
 | --- | --- | --- |
-| `POST` | `/api/v1/presentations/init` | Cria a sessão. `multipart/form-data`: `file` (**PDF ou PPTx**), `persona`, `scenario?`, `user_id?`. Retorna `session_id`. |
+| `POST` | `/api/v1/presentations/init` | Cria a sessão. `multipart/form-data`: `file` (**PDF ou PPTx**) **ou** `pairing_code` (um dos dois), `persona`, `scenario?`, `user_id?`. Retorna `session_id`. Com `pairing_code`, usa o arquivo recebido pelo pareamento e encerra o código. |
 | `POST` | `/api/v1/presentations/{session_id}/audio` | Recebe o áudio completo ou um chunk (`is_chunk=true` anexa ao anterior). |
 | `PUT` | `/api/v1/presentations/{session_id}/transcript` | Recebe a fala **já transcrita no headset** (`transcript`, `engine?`). O `/analyze` então pula o STT. Enviar depois do último chunk e antes do `/analyze`. |
 | `POST` | `/api/v1/presentations/{session_id}/analyze` | Dispara o pipeline **em segundo plano**. Corpo opcional `{"analysis_mode": "basic" \| "full"}` (padrão `full`). Retorna `202` na hora com a `poll_url`. |

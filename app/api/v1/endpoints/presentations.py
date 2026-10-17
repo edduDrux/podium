@@ -40,6 +40,9 @@ from app.domain.errors import (
     NoSpeechError,
     NotRenderableError,
     PageNotFoundError,
+    PairingNotFoundError,
+    PairingNotReadyError,
+    PresentationSourceError,
     UndecodableAudioError,
     UnreadableFileError,
     UnsupportedFileTypeError,
@@ -70,20 +73,44 @@ router = APIRouter(prefix="/presentations", tags=["presentations"])
         FileTooLargeError,
         UnreadableFileError,
         NoExtractableTextError,
+        PresentationSourceError,
+        PairingNotFoundError,
+        PairingNotReadyError,
         session=False,
     ),
 )
 async def init_presentation(
     db: DbSession,
-    file: Annotated[UploadFile, File(description="Apresentação em PDF ou PPTx.")],
     persona: Annotated[PersonaType, Form(description="Persona da banca (LLM).")],
+    file: Annotated[
+        UploadFile | None,
+        File(description="Apresentação em PDF ou PPTx. Envie este campo **ou** `pairing_code`."),
+    ] = None,
+    pairing_code: Annotated[
+        str | None,
+        Form(description="Código de pareamento que já recebeu o arquivo. Alternativa a `file`."),
+    ] = None,
     scenario: Annotated[ScenarioType, Form()] = ScenarioType.CLASSROOM,
     user_id: Annotated[uuid.UUID | None, Form()] = None,
 ) -> PresentationInitResponse:
-    """Recebe cenário, persona e a apresentação do Cliente VR; extrai o texto dos slides."""
-    presentation = await session_service.start_session(
-        db, file, file.filename, file.content_type, persona, scenario, user_id
-    )
+    """Recebe cenário, persona e a apresentação do Cliente VR; extrai o texto dos slides.
+
+    A apresentação chega no próprio pedido (`file`, o atalho do Editor) ou já está no
+    servidor, enviada pelo pareamento (`pairing_code`, o caminho do headset).
+    """
+    if file is not None and pairing_code is None:
+        presentation = await session_service.start_session(
+            db, file, file.filename, file.content_type, persona, scenario, user_id
+        )
+    elif pairing_code is not None and file is None:
+        presentation = await session_service.start_session_from_pairing(
+            db, pairing_code, persona, scenario, user_id
+        )
+    else:
+        raise PresentationSourceError(
+            "Envie a apresentação no campo `file` ou o código de pareamento no campo "
+            "`pairing_code`: um dos dois, não ambos."
+        )
     return PresentationInitResponse(
         session_id=presentation.id,
         status=presentation.status,
