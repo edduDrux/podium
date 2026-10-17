@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import CursorResult, update
 
 from app.adapters import pairing_store, storage
+from app.api import upload_page
 from app.api.errors import register_error_handlers
 from app.api.v1.router import api_router
 from app.core.config import settings
@@ -120,6 +121,8 @@ app.add_middleware(
 
 register_error_handlers(app)
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+# Fora do prefixo da API: é a página que o celular abre, e a URL curta é digitada à mão.
+app.include_router(upload_page.router)
 
 
 @app.get("/", tags=["root"])

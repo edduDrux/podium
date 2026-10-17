@@ -95,6 +95,7 @@ métricas, a taxa de aterramento e as perguntas com a evidência de cada uma.
 | `POST` | `/api/v1/pairings` | Cria um código de 6 dígitos (validade de `PAIRING_TTL_MINUTES`, 10 min) para enviar a apresentação de outro aparelho. Retorna `code`, `expires_at` e `upload_page_url`. |
 | `POST` | `/api/v1/pairings/{code}/file` | Recebe a apresentação para o código (`multipart/form-data`, `file`), com a mesma conferência do `/init`. Um novo envio substitui o anterior. |
 | `GET` | `/api/v1/pairings/{code}` | Situação do código: `waiting` ou `received` (com `filename` e `file_type`). `404` se não existe ou venceu. |
+| `GET` | `/upload?code=` | Página HTML (fora do `/api/v1` e do OpenAPI) que o celular abre para enviar o arquivo ao código. |
 
 ### Fluxo assíncrono do `/analyze`
 

@@ -469,3 +469,9 @@ headset pede um código, mostra-o na sala, e o arquivo chega de outro aparelho.
 - **Segurança:** sem autenticação (§6 do CLAUDE.md), o código curto e de validade curta é o
   que limita o envio a quem está vendo o headset. O código vira nome de pasta e é validado
   (`pairing.is_well_formed`: seis dígitos ASCII) antes de tocar no disco.
+- **Página `/upload`:** HTML estático em `app/api/upload_page.html`, fora do `/api/v1` (a
+  URL curta é digitada no celular) e fora do OpenAPI. O código vem da URL e só é lido pelo
+  JavaScript como texto; o servidor troca apenas constantes da configuração (prefixo da API
+  e limite de tamanho). O envio usa a própria rota da API, então as recusas aparecem na
+  página com o mesmo `detail`. Verificado no navegador em largura de celular: envio de PDF,
+  `.txt` recusado (415), código inexistente (404) e código malformado (validado na página).
