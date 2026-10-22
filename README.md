@@ -76,7 +76,8 @@ docker compose exec api python -m scripts.generate_slides_fixture   # PDF de exe
 ```
 
 O script executa init → audio → analyze → polling → feedback e imprime a transcrição, as
-métricas, a taxa de aterramento e as perguntas com a evidência de cada uma.
+métricas, a taxa de aterramento e as perguntas com a evidência de cada uma. Se o `.env` tem
+`API_KEY`, ele manda a chave no `X-API-Key`; para outro servidor, use `-ApiKey`.
 
 ## Endpoints
 

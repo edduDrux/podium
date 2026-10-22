@@ -12,6 +12,10 @@
     # Analise basica: so a fala, sem slides no prompt e sem cobertura. Rodar a mesma
     # sessao nos dois modos e o que mede a diferenca de tempo entre eles.
     .\scripts\test_flow.ps1 -Presentation "C:\meu_tcc.pdf" -Audio "C:\minha_fala.m4a" -AnalysisMode basic
+
+.EXAMPLE
+    # Outro servidor: a chave dele vai por parametro (sem -ApiKey, vale a do .env local).
+    .\scripts\test_flow.ps1 -Presentation "C:\meu_tcc.pdf" -Audio "C:\minha_fala.m4a" -BaseUrl https://podium-tcc.duckdns.org/api/v1 -ApiKey (Get-Content chave.txt)
 #>
 param(
     [Parameter(Mandatory = $true)][string]$Presentation,
@@ -21,10 +25,29 @@ param(
     [ValidateSet('full', 'basic')]
     [string]$AnalysisMode = 'full',
     [string]$BaseUrl = 'http://localhost:8000/api/v1',
+    # Chave de acesso (X-API-Key). Vazio = o API_KEY do .env da raiz, o mesmo que a API
+    # local le.
+    [string]$ApiKey = '',
     [int]$TimeoutSeconds = 600
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Com API_KEY no .env, a API responde 401 a quem nao manda a chave (DECISOES §14). Sem
+# chave nenhuma, nada vai no cabecalho, e a API sem chave configurada aceita assim.
+$keySource = 'parametro -ApiKey'
+if (-not $ApiKey) {
+    $keySource = '.env'
+    $envFile = Join-Path $PSScriptRoot '..\.env'
+    if (Test-Path $envFile) {
+        $line = Get-Content $envFile -Encoding UTF8 |
+            Where-Object { $_ -match '^\s*API_KEY\s*=' } | Select-Object -Last 1
+        if ($line) { $ApiKey = ($line -replace '^\s*API_KEY\s*=', '').Trim().Trim('"', "'") }
+    }
+}
+# Atribuido em dois passos porque, no PowerShell 5.1, um `if` que devolve @() vira $null.
+$authArgs = @()
+if ($ApiKey) { $authArgs = @('-H', "X-API-Key: $ApiKey") }
 
 # curl.exe escreve UTF-8; lemos sempre de arquivo para o console nao corromper acentos.
 $tmp = Join-Path $env:TEMP "podium_$([guid]::NewGuid()).json"
@@ -46,7 +69,7 @@ function Invoke-Podium {
     #>
     param([string[]]$CurlArgs, [string]$Step = 'A chamada')
 
-    $status = curl.exe -s -o $tmp -w '%{http_code}' @CurlArgs
+    $status = curl.exe -s -o $tmp -w '%{http_code}' @authArgs @CurlArgs
     $body = Get-Content $tmp -Raw -Encoding UTF8
 
     if ($status -notmatch '^2\d\d$') {
@@ -76,6 +99,9 @@ Write-Host "  apresentacao: $presentationPath"
 Write-Host "  audio       : $audioPath"
 Write-Host "  persona     : $Persona"
 Write-Host "  analise     : $AnalysisMode"
+# Nunca o valor da chave: so se ela vai e de onde veio.
+if ($ApiKey) { Write-Host "  chave       : enviada (de $keySource)" }
+else { Write-Host "  chave       : nao enviada (sem -ApiKey e sem API_KEY no .env)" }
 Write-Host ""
 
 # --- 1. Cria a sessao e envia a apresentacao -------------------------------
