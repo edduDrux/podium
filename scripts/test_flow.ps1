@@ -149,7 +149,7 @@ do {
         "$BaseUrl/presentations/$sessionId"
     )
     $elapsed = [int]((Get-Date) - $start).TotalSeconds
-    Write-Host "      ${decorrido}s -> $($session.status)"
+    Write-Host "      ${elapsed}s -> $($session.status)"
 
     if ($elapsed -gt $TimeoutSeconds) { throw "Timeout apos $TimeoutSeconds s." }
 } while ($session.status -eq 'processing')
