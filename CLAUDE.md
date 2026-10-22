@@ -93,6 +93,9 @@ docker compose exec api mypy                         # tipos (mypy.ini)
 - Scripts de validação por parte (rodar no container, `python -m scripts.<nome>`):
   `extract_slides`, `analyze_audio`, `evaluate_coverage`, `generate_slides_fixture`;
   fluxo real: `scripts/test_flow.ps1` (host).
+- **Produção (VM da Oracle):** `docker-compose.prod.yml` por cima deste, Caddy com HTTPS e
+  `sh deploy/update.sh` para instalar e atualizar. Passo a passo em
+  [`docs/DEPLOY.md`](docs/DEPLOY.md).
 
 ## 5. Restrições do ambiente
 
@@ -208,3 +211,6 @@ Tudo mora em `app/domain/slides.py` — emitir (`block`, `assemble`), normalizar
 6. **Medir a análise básica contra a completa** em sessão real antes de afirmar que ela
    é mais rápida: nas medições existentes o tamanho da entrada não explica a latência
    (DECISOES §11).
+7. **Deploy na Oracle**: os arquivos estão prontos e a stack de produção foi verificada
+   localmente (DECISOES §15). Falta o que só o autor faz: conta, VM, domínio e `.env` da VM
+   (`docs/DEPLOY.md`).

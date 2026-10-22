@@ -522,3 +522,37 @@ liberado por um valor que viaja em cada pedido, sem login e sem conta de usuári
 limpos. Na stack de produção local da §15: `/personas` sem chave e com chave errada dão
 `401`, com a chave `200`; o envio do celular sem chave dá `200`; `/health`, `/upload` e
 `/docs` ficam abertos; com `ENVIRONMENT=production` e sem chave, a aplicação nem importa.
+
+## 15. Deploy na Oracle Cloud (2026-10-21)
+
+Arquivos para subir a API na VM ARM do Always Free; o passo a passo está em
+[`DEPLOY.md`](DEPLOY.md).
+
+- **Override, e não um segundo compose inteiro:** `docker-compose.prod.yml` vai por cima do
+  `docker-compose.yml` e só diz o que muda. Banco sem porta publicada (`ports: !reset []`);
+  API em `127.0.0.1:8000`, sem o `.:/code` e sem `--reload` (que reinicia o processo a cada
+  arquivo alterado e derrubaria a análise em curso); Caddy na frente. Na VM, o
+  `COMPOSE_FILE` do `.env` faz o `docker compose` usar os dois arquivos sem os `-f`, então
+  esquecer um `-f` não sobe o modo de desenvolvimento em produção.
+- **Caddy, e não Nginx + Certbot:** um processo, quatro linhas de configuração, e o
+  certificado do Let's Encrypt é pedido e renovado sozinho. O domínio vem do `.env`
+  (`DOMAIN`), e o compose recusa a subida sem ele.
+- **`--forwarded-allow-ips *`:** atrás do proxy, o `request.base_url` sairia `http://` e o
+  `upload_page_url` do pareamento (§13) apontaria para um endereço que o celular não
+  alcança. A API passa a confiar no `X-Forwarded-Proto` do Caddy. O `*` é seguro porque a
+  porta 8000 só é alcançada pela rede do Compose e pelo próprio host.
+- **Migrations antes da API nova:** o `deploy/update.sh` roda `alembic upgrade head` num
+  container avulso e só depois o `up -d`, para a API nova nunca rodar contra o esquema antigo.
+- **Log com teto:** o Docker guarda log sem limite, e o polling do headset escreve uma linha
+  a cada 2 s. Três arquivos de 10 MB por container.
+- **Domínio gratuito (DuckDNS):** o Let's Encrypt não emite certificado para IP, e o Quest
+  recusa `http://` por padrão.
+
+**Verificado no PC (2026-10-21)** com o próprio `deploy/update.sh`, num projeto Compose
+separado (`podiumprodtest`, com volumes próprios) e `DOMAIN=localhost`, caso em que o Caddy
+usa certificado interno. Resultado: build feito; migrations num banco vazio até
+`c5e2a8f41b97`; os três containers no ar; banco sem porta publicada e API só em
+`127.0.0.1`. O `http://` responde `308` para o `https://`, e o `upload_page_url` saiu
+`https://localhost/upload?code=...`. O projeto de teste foi removido depois, com os volumes.
+**Não verificado:** a VM de verdade (ARM64, Security List, iptables da imagem Ubuntu) e o
+certificado do Let's Encrypt, que exige domínio público.
