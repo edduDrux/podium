@@ -135,7 +135,7 @@ Testes em `tests/test_cobertura.py`, incluindo o adversarial sintético.
 8. ~~Flag de truncamento de contexto~~ — feita
 9. ~~Reduzir personas~~ — feita (3 personas; migration `f4b1c9d2e370`)
 10. ~~Testes, linter e CI~~ — feita
-11. **Autenticação, antes de qualquer deploy público — bloqueante para produção.**
+11. ~~Autenticação, antes de qualquer deploy público~~ — feita com chave única (ver §14)
 
 ### Decidido para o TCC III, não implementar agora
 
@@ -484,3 +484,41 @@ headset pede um código, mostra-o na sala, e o arquivo chega de outro aparelho.
   que as duas portas usam sem uma importar a outra. Fluxo real verificado contra o banco
   de desenvolvimento: código → envio → `/init` → sessão `created` com 2 slides desenháveis
   → código `404`.
+
+## 14. Chave de acesso do Cliente VR (2026-10-21)
+
+Pré-requisito do deploy na Oracle (item 11 do backlog da §6). Decisão do autor: o acesso é
+liberado por um valor que viaja em cada pedido, sem login e sem conta de usuário.
+
+- **Como funciona:** o Cliente VR manda o cabeçalho `X-API-Key`, e `require_api_key`
+  (`api/deps.py`) compara com `API_KEY` do `.env` usando `secrets.compare_digest`, que leva o
+  mesmo tempo acerte ou erre. Sem a chave, ou com outra: `401` com `detail` em português,
+  que o app mostra como está.
+- **Cabeçalho, e não parâmetro na URL:** a URL fica registrada em log de proxy e em
+  histórico; o cabeçalho não.
+- **Abertas de propósito:** o `/health`, porque o teste de rede do Quest é abri-lo no
+  navegador, que não manda cabeçalho. O `POST /pairings/{code}/file` e a página `/upload`,
+  porque o celular não tem a chave: a credencial dele é o código de 6 dígitos com validade de
+  10 min que ele lê na sala (§13). E o `/`, que só diz nome e versão. O router do pareamento
+  virou dois (`router` e `upload_router`) para que essa escolha fique visível numa linha do
+  `api/v1/router.py`.
+- **Produção falha fechada:** com `ENVIRONMENT=production` e sem `API_KEY`, a configuração
+  recusa a subida, e nem a API nem o Alembic iniciam. Esquecer a chave no `.env` do servidor
+  deixaria a API aberta sem nenhum aviso. Fora de produção, vazia quer dizer sem
+  conferência: o modo da LAN, em que o app sem chave e a suíte seguem como antes.
+- **Rota nova não fica aberta por esquecimento:** `test_only_the_open_routes_skip_the_api_key`
+  lista no OpenAPI as operações sem `security` e as compara com as abertas acima.
+- **O que a chave não protege:** ela vai dentro do APK, e quem tiver o APK consegue extraí-la.
+  Ela barra o robô que varre IPs e quem só conhece o endereço; não identifica pessoa. Trocar
+  a chave = mudar o `.env` do servidor e gerar um build novo do app. Login por usuário fica
+  para quando houver usuários reais além do autor.
+- **`/docs` continua público:** mostra o contrato, mas sem a chave nenhuma rota do app
+  responde. O botão *Authorize* do Swagger recebe a chave para testar por ali.
+- **Erro de configuração sem os valores:** `hide_input_in_errors=True` no `Settings`. Sem
+  isso, a recusa de subir sem chave imprimia no log o dicionário lido do `.env`, com a chave
+  do Gemini e a senha do banco (visto no teste da §15).
+
+**Verificado:** 217 testes (11 novos em `tests/api/test_api_key.py`), `ruff` e `mypy`
+limpos. Na stack de produção local da §15: `/personas` sem chave e com chave errada dão
+`401`, com a chave `200`; o envio do celular sem chave dá `200`; `/health`, `/upload` e
+`/docs` ficam abertos; com `ENVIRONMENT=production` e sem chave, a aplicação nem importa.

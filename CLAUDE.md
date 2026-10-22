@@ -115,8 +115,11 @@ nativa multimodal · métricas de forma independentes do STT · `202` + polling.
 - **Sem pgvector/RAG/chunking** — texto completo no prompt é mais preciso; o gatilho para
   migrar é a frequência dos flags de truncamento em sessões reais.
 - **Sem fila de tarefas** — `BackgroundTasks` + reconciliação no lifespan bastam.
-- **Sem autenticação** — aceitável local; **obrigatória antes de deploy público**
-  (áudio de voz é dado biométrico, LGPD).
+- **Autenticação por chave única, não por usuário** — o Cliente VR manda `X-API-Key`, que
+  `require_api_key` compara com `API_KEY` do `.env` (DECISOES §14). Abertos só o `/health`,
+  o envio do celular pelo código de pareamento e a página `/upload`. Com
+  `ENVIRONMENT=production` a API **não sobe** sem a chave; vazia fora de produção = sem
+  conferência (LAN). Rota nova vai no grupo protegido do `api/v1/router.py`.
 
 ## 7. Contrato do marcador de slide (âncora de evidência de todo o sistema)
 
@@ -193,7 +196,7 @@ Tudo mora em `app/domain/slides.py` — emitir (`block`, `assemble`), normalizar
 
 (Detalhes, medições e backlog completo em [`docs/DECISOES.md`](docs/DECISOES.md).)
 
-1. **Autenticação** — bloqueante antes de qualquer deploy público.
+1. ~~**Autenticação**~~ — feita com a chave única `X-API-Key` (DECISOES §14).
 2. **Calibrar os limiares de cobertura** (`COVERAGE_*`: 0.6/0.3/0.15, vindos do PRD) na
    próxima sessão real.
 3. **Reteste adversarial real contra o Gemini** (slides do TCC + áudio de feijoada) — o

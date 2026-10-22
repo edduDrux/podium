@@ -16,7 +16,11 @@ from app.domain.pairing import Pairing
 from app.schemas.pairing import PairingCreatedResponse, PairingResponse
 from app.services import pairing_service
 
+# Dois routers porque são dois aparelhos: o headset tem a chave de acesso, o celular não.
+# O celular só envia o arquivo, e o que o autoriza é o código de validade curta que ele lê
+# na sala (`api/v1/router.py` decide quem exige a chave).
 router = APIRouter(prefix="/pairings", tags=["pairings"])
+upload_router = APIRouter(prefix="/pairings", tags=["pairings"])
 
 PairingCode = Annotated[str, Path(pattern=r"^\d{6}$", description="Código de seis dígitos.")]
 
@@ -36,7 +40,7 @@ async def create_pairing(request: Request) -> PairingCreatedResponse:
     )
 
 
-@router.post(
+@upload_router.post(
     "/{code}/file",
     summary="Recebe a apresentação enviada para o código",
     responses=documented(

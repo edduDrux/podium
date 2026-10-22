@@ -91,6 +91,13 @@ def isolated_storage(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "STORAGE_DIR", str(tmp_path / "storage"))
 
 
+@pytest.fixture(autouse=True)
+def no_api_key(monkeypatch):
+    """Sem chave, como na LAN de desenvolvimento, mesmo que o `.env` de quem roda tenha
+    uma; os testes da chave a ligam por conta própria (`test_api_key.py`)."""
+    monkeypatch.setattr(settings, "API_KEY", "")
+
+
 @pytest.fixture
 def pdf_file(tmp_path) -> Path:
     return make_pdf(

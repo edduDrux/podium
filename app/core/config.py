@@ -1,7 +1,8 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,6 +14,9 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
+        # Sem isto, um erro de validação despeja no log tudo o que foi lido do .env,
+        # inclusive GEMINI_API_KEY, API_KEY e a senha do banco.
+        hide_input_in_errors=True,
     )
 
     # --- Aplicação ---
@@ -31,6 +35,11 @@ class Settings(BaseSettings):
     # de CORS proíbe curinga junto de credenciais — o navegador rejeita a resposta e o
     # erro aparece do lado do cliente, longe da causa. Origens explícitas sempre.
     BACKEND_CORS_ORIGINS: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+
+    # --- Acesso: a chave que o Cliente VR manda no cabeçalho `X-API-Key` ---
+    # Vazia, a API não confere nada: é o modo da LAN de desenvolvimento. Em produção ela é
+    # obrigatória (ver `_require_api_key_in_production`).
+    API_KEY: str = ""
 
     # --- IA: Google Gemini (free tier) ---
     # O Gemini expõe DUAS interfaces e o PODIUM usa as duas:
@@ -78,6 +87,17 @@ class Settings(BaseSettings):
     # Curto de propósito: sem autenticação, a validade do código é o que limita o envio a
     # quem está vendo o headset. Dez minutos bastam para abrir a página e escolher o PDF.
     PAIRING_TTL_MINUTES: int = 10
+
+    @model_validator(mode="after")
+    def _require_api_key_in_production(self) -> Self:
+        """Esquecer a chave no `.env` do servidor deixaria a API aberta na internet sem
+        nenhum aviso. Recusar a subida transforma o esquecimento num erro visível."""
+        if self.ENVIRONMENT == "production" and not self.API_KEY:
+            raise ValueError(
+                "API_KEY é obrigatória com ENVIRONMENT=production. "
+                "Gere uma com `openssl rand -hex 32` e coloque no .env."
+            )
+        return self
 
     @property
     def storage_path(self) -> Path:

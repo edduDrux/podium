@@ -80,6 +80,11 @@ métricas, a taxa de aterramento e as perguntas com a evidência de cada uma.
 
 ## Endpoints
 
+Com `API_KEY` preenchida no `.env`, toda rota exige o cabeçalho `X-API-Key` com esse valor
+(sem ele: `401`), exceto o `/health`, o `POST /pairings/{code}/file` e a página `/upload`,
+que o celular usa só com o código. Vazia, nada é conferido (desenvolvimento na LAN); em
+produção a API não sobe sem ela. No `/docs`, o botão *Authorize* recebe a chave.
+
 | Método | Rota | Ação |
 | --- | --- | --- |
 | `POST` | `/api/v1/presentations/init` | Cria a sessão. `multipart/form-data`: `file` (**PDF ou PPTx**) **ou** `pairing_code` (um dos dois), `persona`, `scenario?`, `user_id?`. Retorna `session_id`. Com `pairing_code`, usa o arquivo recebido pelo pareamento e encerra o código. |
@@ -166,8 +171,8 @@ logs e mensagens em português (glossário em `docs/DECISOES.md` §11).
 - Áudio: até 15 minutos por sessão (`MAX_AUDIO_DURATION_MINUTES`).
 - Arquivos ficam em `storage/<session_id>/` e são apagados após
   `STORAGE_RETENTION_HOURS` (padrão 24 h; `0` desativa).
-- **Sem autenticação** — aceitável apenas local; obrigatória antes de qualquer deploy
-  público (áudio de voz é dado biométrico sob a LGPD).
+- **Autenticação por chave única** — o Cliente VR manda o cabeçalho `X-API-Key` com o
+  valor de `API_KEY`. Uma chave para o app, não uma por usuário (`docs/DECISOES.md` §14).
 
 ## Sem Docker (alternativa)
 
