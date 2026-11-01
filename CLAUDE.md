@@ -211,6 +211,5 @@ Tudo mora em `app/domain/slides.py` — emitir (`block`, `assemble`), normalizar
 6. **Medir a análise básica contra a completa** em sessão real antes de afirmar que ela
    é mais rápida: nas medições existentes o tamanho da entrada não explica a latência
    (DECISOES §11).
-7. **Deploy na Oracle**: os arquivos estão prontos e a stack de produção foi verificada
-   localmente (DECISOES §15). Falta o que só o autor faz: conta, VM, domínio e `.env` da VM
-   (`docs/DEPLOY.md`).
+7. ~~**Deploy na Oracle**~~ — no ar desde 2026-11-01, com HTTPS e chave conferidos pela
+   internet (DECISOES §15). Atualizar: `sh deploy/update.sh` na VM.

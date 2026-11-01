@@ -67,9 +67,15 @@ A 80 é para o Let's Encrypt validar o domínio e para redirecionar ao HTTPS. **
 
 ## 5. Domínio
 
-O Caddy só emite certificado para um nome. Um gratuito do [DuckDNS](https://www.duckdns.org):
-entre, crie um subdomínio (ex.: `podium-tcc`) e ponha o IP da VM em *current ip*. O
-domínio fica `podium-tcc.duckdns.org`. Confira no PowerShell:
+O Caddy só emite certificado para um nome. Duas opções gratuitas:
+
+- **sslip.io (a usada no deploy atual):** sem conta. O nome é o IP da VM com hífens, por
+  exemplo `203-0-113-10.sslip.io` para o IP `203.0.113.10`, e já resolve para ele. Se a VM
+  for recriada e o IP mudar, o domínio muda junto.
+- **[DuckDNS](https://www.duckdns.org):** nome fixo. Entre, crie um subdomínio (ex.:
+  `podium-tcc`) e ponha o IP da VM em *current ip*; o domínio fica `podium-tcc.duckdns.org`.
+
+Confira no PowerShell que o nome aponta para a VM:
 
 ```powershell
 Resolve-DnsName podium-tcc.duckdns.org

@@ -556,3 +556,17 @@ usa certificado interno. Resultado: build feito; migrations num banco vazio até
 `https://localhost/upload?code=...`. O projeto de teste foi removido depois, com os volumes.
 **Não verificado:** a VM de verdade (ARM64, Security List, iptables da imagem Ubuntu) e o
 certificado do Let's Encrypt, que exige domínio público.
+
+**No ar na VM da Oracle (2026-11-01).** A VM tem Ubuntu 24.04 aarch64, 1 OCPU e 6 GB, com
+Docker 29.9 e Compose 5.6. O `deploy/update.sh` montou a imagem em ARM64 e as migrations
+criaram o banco do zero até `c5e2a8f41b97`. O Caddy obteve o certificado do Let's Encrypt
+em menos de um minuto. Testado pela internet: `/health` em `production`; `/personas` sem
+chave e com chave errada dão `401`, com a chave do app `200`; o `upload_page_url` sai com
+`https://`; o `http://` dá `308`; as portas 8000, 5432 e 5433 não respondem de fora.
+- **Domínio: sslip.io, e não DuckDNS.** O nome é o próprio IP com hífens
+  (`<a-b-c-d>.sslip.io`) e resolve para ele sem conta nem cadastro. Em troca, se o IP mudar
+  (VM recriada), o domínio muda junto: `DOMAIN` e `BACKEND_CORS_ORIGINS` no `.env` da VM e
+  o `podium-api-url.txt` no headset. O DuckDNS continua sendo a saída para um nome fixo.
+- **iptables da imagem Ubuntu:** a cadeia INPUT recusa tudo menos a 22, mas as portas
+  publicadas pelo Docker passam pela FORWARD, onde `DOCKER-USER` e `DOCKER-FORWARD` vêm
+  antes do `REJECT`. A Security List bastou; o firewall da VM não foi alterado.
