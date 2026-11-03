@@ -7,15 +7,16 @@ na free tier. Inclui a mecânica de chunks de áudio e a limpeza automática por
 
 | Arquivo | Papel |
 |---|---|
-| [`app/services/storage_service.py`](../../app/services/storage_service.py) | Tudo: diretórios por sessão, upload em streaming, chunks, purga |
+| [`app/adapters/storage.py`](../../app/adapters/storage.py) | Tudo: diretórios por sessão, upload em streaming, chunks, purga |
 
 ## Por onde começar a ler
 
-1. `save_upload()` — gravação em streaming com limite de tamanho.
+1. `Upload` e `save_upload()` — gravação em streaming com limite de tamanho; recebe
+   qualquer objeto com `read`/`seek`, para que os casos de uso não dependam do FastAPI.
 2. `next_chunk_path()` — o docstring conta a história do bug que motivou o desenho
    (índice pela contagem sobrescrevia fala já recebida).
 3. `purge_expired()` + `_is_session_dir()` — a limpeza só toca em pastas com nome de
-   UUID; `storage/_fixtures/` sobrevive de propósito.
+   UUID; `storage/_fixtures/` sobrevive de propósito. Roda numa thread, a cada hora.
 
 ## O que esta parte garante
 
@@ -25,12 +26,13 @@ na free tier. Inclui a mecânica de chunks de áudio e a limpeza automática por
 - **Ordem de reprodução** vem do índice no nome do arquivo, nunca do mtime.
 - Nome de arquivo do upload é entrada de usuário: o sufixo é validado por regex antes de
   virar caminho em disco.
+- Upload acima do limite é apagado e recusado com `FileTooLargeError` (413).
 - Arquivos de sessão somem após `STORAGE_RETENTION_HOURS` (24h; `0` desativa).
 
 ## Como validar
 
 ```bash
-docker compose exec api python -m pytest tests/test_storage_service.py -v
+docker compose exec api python -m pytest tests/adapters/test_storage.py -v
 ```
 
 ## Armadilha

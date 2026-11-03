@@ -20,3 +20,6 @@ storage/*
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Configuracao pessoal do Claude Code (as skills em .claude/skills sao do projeto)
+.claude/settings.local.json

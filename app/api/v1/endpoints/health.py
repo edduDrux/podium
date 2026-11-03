@@ -8,7 +8,7 @@ from app.schemas.common import HealthResponse
 router = APIRouter(tags=["health"])
 
 
-@router.get("/health", response_model=HealthResponse)
+@router.get("/health")
 async def health_check(db: DbSession) -> HealthResponse:
     """Checagem de vida usada pelo Docker e pelo Cliente VR antes de iniciar sessão."""
     try:

@@ -135,7 +135,7 @@ Testes em `tests/test_cobertura.py`, incluindo o adversarial sintético.
 8. ~~Flag de truncamento de contexto~~ — feita
 9. ~~Reduzir personas~~ — feita (3 personas; migration `f4b1c9d2e370`)
 10. ~~Testes, linter e CI~~ — feita
-11. **Autenticação, antes de qualquer deploy público — bloqueante para produção.**
+11. ~~Autenticação, antes de qualquer deploy público~~ — feita com chave única (ver §14)
 
 ### Decidido para o TCC III, não implementar agora
 
@@ -304,3 +304,269 @@ vazia.
 (`test_transcript_service.py`, `test_slide_render_service.py`). Uma armadilha achada
 ao rodar: aberto como documento, um PNG é medido em PONTOS a 72 dpi, então uma imagem de
 400 px aparece como 300 — a verificação de tamanho tem de usar `fitz.Pixmap`.
+
+## 11. Reestruturação guiada (2026-10-12)
+
+Em 2026-10-10 o autor cogitou reescrever o backend do zero, por não se reconhecer no
+código (nomes vagos, mistura de português e inglês, papéis misturados em `services/`).
+Uma análise com as skills do projeto (`padroes-arquitetura-python`, `codebase-design`,
+`fastapi-boas-praticas`) mostrou que a base segue os padrões do *Architecture Patterns
+with Python* e que os problemas se concentram nas costuras entre módulos. A decisão foi
+**refatorar o código atual, módulo a módulo**, com os 72 testes como rede de segurança.
+As decisões abaixo saíram de três rodadas de `/grill-me` com o autor.
+
+**Achados que motivaram o plano (verificados em 2026-10-12):**
+
+- `GET /feedback` devolvia **200 vazio antes da análise** (reproduzido na API local:
+  `/init` → `PUT /transcript` → `GET /feedback` com a sessão em `created`), resposta
+  idêntica a uma análise concluída sem perguntas aprovadas.
+- `/audio` aceitava áudio com a sessão em `processing` e devolvia o status a
+  `audio_received`, reabrindo a porta para uma segunda análise simultânea.
+- PyMuPDF, python-pptx e pydub eram chamados direto no event loop em 4 pontos; cada
+  análise decodifica o mesmo áudio três vezes.
+- A porta `BancaExaminadora` escondia prompt, parse e **aterramento** dentro do adaptador
+  do Gemini: o dublê de teste substituía o núcleo científico junto, e nenhum teste do
+  pipeline passava pelo aterramento.
+- A imagem Docker em uso vinha de outro Dockerfile: a API estava fora do ar havia 36 h e
+  a suíte não coletava (`No module named 'pydub'`). Resolvido com `docker compose up --build`.
+
+**Etapas, nesta ordem** (um commit por item; pausa para revisão ao fim de cada etapa):
+
+1. Defeitos (`GET /feedback` → 409 fora de `completed`; `/audio` → 409 em `processing`;
+   código bloqueante fora do event loop) e limpeza (código morto, defaults de modelo e
+   `DEBUG`).
+2. Rede de segurança: `ruff format` + checagem no CI, mypy, build da imagem no CI, testes
+   de API com `httpx` + `ASGITransport` e `dependency_overrides`, **sem banco**.
+3. Renomeação para inglês e separação de `app/` em `domain/`, `adapters/` e `services/`
+   (casos de uso), com migration escrita à mão que preserva as 27 chamadas medidas em
+   `llm_calls`.
+4. Banca: a porta passa a ser o transporte (`LanguageModel.complete`); prompt, parse e
+   aterramento vão para o domínio; personas configuráveis; tipos próprios do domínio;
+   provedor informado à auditoria.
+5. Ciclo de vida da sessão numa tabela de estados × ações; casos de uso fora dos
+   endpoints; formato do feedback gravado num único módulo.
+6. Modos de análise `basic` e `full`.
+7. Documentação do contrato da API para o cliente Unity.
+
+**Convenção de nomes.** Identificadores em inglês (arquivos, classes, funções, campos da
+API, chaves do JSONB, valores de enum, colunas); comentários, docstrings, logs, mensagens
+da API e o texto do prompt em português. Glossário:
+
+| Português | Inglês |
+|---|---|
+| banca examinadora | `panel` |
+| pergunta / justificativa | `question` / `rationale` |
+| aterramento / trecho literal / slide de origem | `grounding` / `quote` / `slide_number` |
+| cobertura de slides / alerta de descolamento | `slide_coverage` / `mismatch_alert` |
+| apresentado / parcial / não apresentado / sem termos | `presented` / `partial` / `not_presented` / `no_terms` |
+| métricas de forma / análise de conteúdo | `delivery_metrics` / `content_analysis` |
+| truncado / origem da transcrição / auditoria / limiar | `truncated` / `transcript_source` / `audit` / `threshold` |
+| professor rigoroso / orientador acolhedor / especialista técnico | `strict_professor` / `supportive_advisor` / `technical_expert` |
+| análise básica / completa | `analysis_mode`: `basic` / `full` |
+
+**Personas.** Cada uma configura papel, foco, tom e número de perguntas. Temperatura,
+modelo e a estrutura dos insumos ficam **iguais para todas**: variar a temperatura por
+persona misturaria estilo com aleatoriedade na comparação entre personas do relatório.
+Prompt final = modelo do modo + bloco da persona (2 modelos × 3 blocos). O texto de cada
+bloco é redigido na etapa 4 e aprovado pelo autor.
+
+**Modos de análise** (escolhidos no corpo do `/analyze`, padrão `full`, gravados numa
+coluna `analysis_mode` em `feedbacks`):
+
+- `full` — o que existe hoje: slides + fala, cobertura, métricas de forma; áudio
+  obrigatório.
+- `basic` — perguntas só sobre a fala, sem slides no prompt e sem cobertura. Aceita
+  transcrição, áudio ou os dois: havendo transcrição, o STT não roda; só com áudio, o STT
+  roda antes do LLM; métricas de forma só quando há áudio. O `/init` continua exigindo o
+  arquivo de slides.
+- **Aterramento obrigatório nos dois modos.** O trecho literal (`quote`) é evidência
+  interna, conferida mecanicamente contra a origem declarada (`source`: `slides` ou
+  `speech`); o texto da pergunta é natural ("No slide 4 você apresentou…", "Você comentou
+  que…"). No `full`, perguntas podem se ancorar nos slides ou na fala.
+- **Ganho de tempo a medir antes de afirmar.** Nas 27 chamadas registradas, o tamanho da
+  entrada (1k × 3k tokens) não explica a latência da geração (12,6–86,2 s); o STT domina
+  (85–179 s para 7,3 min de fala) e já é pulado quando o headset envia a transcrição, nos
+  dois modos.
+
+### 11.1 Fechamento (2026-10-13)
+
+As 7 etapas foram concluídas em 38 commits na branch `reestruturacao`, de `050653e`
+(skills) a esta nota. A suíte foi de 72 para 183 testes, todos sem rede, sem cota e sem
+banco; `ruff check`, `ruff format --check` e `mypy` (em `app/` e `scripts/`) passam
+limpos, e a CI monta a imagem em amd64 e arm64.
+
+**Como foi verificado.** As duas migrations (`3d9a6f2c8b14`, renomeação para inglês com
+conversão dos dados do JSONB; `c5e2a8f41b97`, coluna `analysis_mode`) rodaram num clone
+do banco de desenvolvimento (`podium_check`, via `pg_dump`): `upgrade` → `downgrade` →
+`upgrade`, com o `downgrade` devolvendo os dados byte a byte. Os endpoints foram
+exercitados numa segunda instância da API (porta 8001) apontada para o clone, sem chamar
+o Gemini. Os comandos de validação dos guias de `docs/partes/` e do README foram
+executados um a um no container.
+
+**Desvios do plano:**
+
+- A porta da banca ficou `LanguageModel.complete(system, user, presentation_id)`, sem
+  temperatura: ela é a mesma para todas as personas, então o adaptador a recebe na
+  construção (`bootstrap.py`) e a porta não precisa carregá-la.
+- A etapa 7 virou o próprio OpenAPI, e não um documento à parte: `documented(...)` em
+  `api/errors.py` monta o `responses=` de cada endpoint a partir da mesma tabela que
+  produz o status, e `tests/api/test_openapi.py` confere que os dois não divergem. O
+  `/docs` é o contrato que o cliente Unity vai ler.
+- `1c8f0a0` é uma quebra de contrato (valores e chaves em inglês). Não afeta ninguém
+  porque o Cliente VR ainda não existe; os feedbacks antigos são convertidos pela
+  migration e continuam legíveis.
+- Sem a entrada que o modo exige, o `/analyze` recusa com **409**, não 422: a sessão
+  existe, mas ainda não recebeu o que o modo pede (mesma família do "fora de ordem").
+
+**Pendências que dependem do autor:**
+
+1. **Aplicar as migrations no banco de desenvolvimento**
+   (`docker compose exec api alembic upgrade head`). Até lá, o código novo roda contra o
+   esquema antigo (`f4b1c9d2e370`): colunas de `llm_calls`, rótulos dos enums e a coluna
+   `feedbacks.analysis_mode` não batem com os models.
+2. **Aprovar o texto das 3 personas** (`app/domain/personas.py`): são rascunhos.
+3. **Validar em sessão real** o prompt da análise completa (mudou: origem `speech`) e o
+   da básica (novo). Gasta cota.
+4. **Medir a básica contra a completa** antes de afirmar ganho de tempo
+   (`scripts/test_flow.ps1 -AnalysisMode basic`).
+
+## 12. Lista de personas para o Cliente VR (2026-10-17)
+
+Primeira das duas mudanças pedidas pelo Cliente VR (`podium-vr`, Fase 5A do plano dele): o
+headset monta a escolha de persona a partir de `GET /api/v1/personas`, em vez de ter os
+valores do enum escritos no app.
+
+- **Por quê na API:** a API já é a dona das personas (`domain/personas.py`). Se o app
+  guardasse a lista, criar ou renomear uma persona exigiria build e reinstalação no Quest,
+  e as duas cópias poderiam divergir.
+- **O que mudou:** `PersonaProfile` ganhou `label` e `description` (textos de exibição em
+  português, sem efeito no prompt: `block()` continua usando só `role`, `focus` e `tone`).
+  O endpoint devolve `list[PersonaResponse {id, label, description}]` na ordem do enum.
+- **Sem banco e sem migration:** a lista sai da mesma tabela que monta o prompt.
+- **Textos de exibição aprovados pelo autor** em 2026-10-17, depois de vê-los no headset
+  (simulador). Os textos do prompt (`role`, `focus`, `tone`) seguem na pendência 2 da §11.1.
+
+## 13. Pareamento para enviar a apresentação (2026-10-17)
+
+Segunda mudança pedida pelo Cliente VR (Fase 6A do plano dele). No Quest não há seletor de
+arquivos prático, e o `/init` exigia o arquivo na mesma chamada que a persona. Agora o
+headset pede um código, mostra-o na sala, e o arquivo chega de outro aparelho.
+
+- **Rotas:** `POST /pairings` (cria o código), `POST /pairings/{code}/file` (recebe o
+  arquivo), `GET /pairings/{code}` (o headset consulta até chegar). Código de 6 dígitos de
+  `secrets`, validade de `PAIRING_TTL_MINUTES` (10 min). Inexistente e vencido dão o mesmo
+  `404` (`PairingNotFoundError`): para quem envia, a saída é a mesma, gerar outro código.
+- **Mesma conferência do `/init`:** a ingestão virou `session_service.ingest_presentation`,
+  usada pelas duas portas. Quem envia pelo celular vê a recusa (415, 413, 422) na hora, e não
+  quando o headset tentasse iniciar a sessão.
+- **Estado em disco, não em memória:** `storage/_pairings/<código>/` com o arquivo e um
+  `pairing.json`. Sobrevive ao `--reload`, não exige migration. O `_` mantém a pasta fora
+  da limpeza de sessões (que só apaga nomes de UUID); a limpeza periódica ganhou
+  `pairing_store.purge_expired`.
+- **`upload_page_url`** é montada a partir do endereço que o headset usou para chamar a API
+  (`request.base_url`): no Quest é o IP do PC na rede, o mesmo que o celular alcança. A API
+  não precisa saber o próprio IP.
+- **Segurança:** sem autenticação (§6 do CLAUDE.md), o código curto e de validade curta é o
+  que limita o envio a quem está vendo o headset. O código vira nome de pasta e é validado
+  (`pairing.is_well_formed`: seis dígitos ASCII) antes de tocar no disco.
+- **Página `/upload`:** HTML estático em `app/api/upload_page.html`, fora do `/api/v1` (a
+  URL curta é digitada no celular) e fora do OpenAPI. O código vem da URL e só é lido pelo
+  JavaScript como texto; o servidor troca apenas constantes da configuração (prefixo da API
+  e limite de tamanho). O envio usa a própria rota da API, então as recusas aparecem na
+  página com o mesmo `detail`. Verificado no navegador em largura de celular: envio de PDF,
+  `.txt` recusado (415), código inexistente (404) e código malformado (validado na página).
+- **`/init` com `pairing_code`:** alternativa a `file`, exatamente um dos dois
+  (`PresentationSourceError`, 422). Código esperando arquivo dá `409`
+  (`PairingNotReadyError`, mesma família do "fora de ordem"); inexistente ou vencido, `404`.
+  O arquivo muda da pasta do código para a da sessão e o código é apagado **depois** do
+  commit: se a gravação falhar, o headset ainda vê o código e pode gerar outro. A
+  conferência do arquivo saiu do `session_service` para `services/presentation_intake.py`,
+  que as duas portas usam sem uma importar a outra. Fluxo real verificado contra o banco
+  de desenvolvimento: código → envio → `/init` → sessão `created` com 2 slides desenháveis
+  → código `404`.
+
+## 14. Chave de acesso do Cliente VR (2026-10-21)
+
+Pré-requisito do deploy na Oracle (item 11 do backlog da §6). Decisão do autor: o acesso é
+liberado por um valor que viaja em cada pedido, sem login e sem conta de usuário.
+
+- **Como funciona:** o Cliente VR manda o cabeçalho `X-API-Key`, e `require_api_key`
+  (`api/deps.py`) compara com `API_KEY` do `.env` usando `secrets.compare_digest`, que leva o
+  mesmo tempo acerte ou erre. Sem a chave, ou com outra: `401` com `detail` em português,
+  que o app mostra como está.
+- **Cabeçalho, e não parâmetro na URL:** a URL fica registrada em log de proxy e em
+  histórico; o cabeçalho não.
+- **Abertas de propósito:** o `/health`, porque o teste de rede do Quest é abri-lo no
+  navegador, que não manda cabeçalho. O `POST /pairings/{code}/file` e a página `/upload`,
+  porque o celular não tem a chave: a credencial dele é o código de 6 dígitos com validade de
+  10 min que ele lê na sala (§13). E o `/`, que só diz nome e versão. O router do pareamento
+  virou dois (`router` e `upload_router`) para que essa escolha fique visível numa linha do
+  `api/v1/router.py`.
+- **Produção falha fechada:** com `ENVIRONMENT=production` e sem `API_KEY`, a configuração
+  recusa a subida, e nem a API nem o Alembic iniciam. Esquecer a chave no `.env` do servidor
+  deixaria a API aberta sem nenhum aviso. Fora de produção, vazia quer dizer sem
+  conferência: o modo da LAN, em que o app sem chave e a suíte seguem como antes.
+- **Rota nova não fica aberta por esquecimento:** `test_only_the_open_routes_skip_the_api_key`
+  lista no OpenAPI as operações sem `security` e as compara com as abertas acima.
+- **O que a chave não protege:** ela vai dentro do APK, e quem tiver o APK consegue extraí-la.
+  Ela barra o robô que varre IPs e quem só conhece o endereço; não identifica pessoa. Trocar
+  a chave = mudar o `.env` do servidor e gerar um build novo do app. Login por usuário fica
+  para quando houver usuários reais além do autor.
+- **`/docs` continua público:** mostra o contrato, mas sem a chave nenhuma rota do app
+  responde. O botão *Authorize* do Swagger recebe a chave para testar por ali.
+- **Erro de configuração sem os valores:** `hide_input_in_errors=True` no `Settings`. Sem
+  isso, a recusa de subir sem chave imprimia no log o dicionário lido do `.env`, com a chave
+  do Gemini e a senha do banco (visto no teste da §15).
+
+**Verificado:** 217 testes (11 novos em `tests/api/test_api_key.py`), `ruff` e `mypy`
+limpos. Na stack de produção local da §15: `/personas` sem chave e com chave errada dão
+`401`, com a chave `200`; o envio do celular sem chave dá `200`; `/health`, `/upload` e
+`/docs` ficam abertos; com `ENVIRONMENT=production` e sem chave, a aplicação nem importa.
+
+## 15. Deploy na Oracle Cloud (2026-10-21)
+
+Arquivos para subir a API na VM ARM do Always Free; o passo a passo está em
+[`DEPLOY.md`](DEPLOY.md).
+
+- **Override, e não um segundo compose inteiro:** `docker-compose.prod.yml` vai por cima do
+  `docker-compose.yml` e só diz o que muda. Banco sem porta publicada (`ports: !reset []`);
+  API em `127.0.0.1:8000`, sem o `.:/code` e sem `--reload` (que reinicia o processo a cada
+  arquivo alterado e derrubaria a análise em curso); Caddy na frente. Na VM, o
+  `COMPOSE_FILE` do `.env` faz o `docker compose` usar os dois arquivos sem os `-f`, então
+  esquecer um `-f` não sobe o modo de desenvolvimento em produção.
+- **Caddy, e não Nginx + Certbot:** um processo, quatro linhas de configuração, e o
+  certificado do Let's Encrypt é pedido e renovado sozinho. O domínio vem do `.env`
+  (`DOMAIN`), e o compose recusa a subida sem ele.
+- **`--forwarded-allow-ips *`:** atrás do proxy, o `request.base_url` sairia `http://` e o
+  `upload_page_url` do pareamento (§13) apontaria para um endereço que o celular não
+  alcança. A API passa a confiar no `X-Forwarded-Proto` do Caddy. O `*` é seguro porque a
+  porta 8000 só é alcançada pela rede do Compose e pelo próprio host.
+- **Migrations antes da API nova:** o `deploy/update.sh` roda `alembic upgrade head` num
+  container avulso e só depois o `up -d`, para a API nova nunca rodar contra o esquema antigo.
+- **Log com teto:** o Docker guarda log sem limite, e o polling do headset escreve uma linha
+  a cada 2 s. Três arquivos de 10 MB por container.
+- **Domínio gratuito (DuckDNS):** o Let's Encrypt não emite certificado para IP, e o Quest
+  recusa `http://` por padrão.
+
+**Verificado no PC (2026-10-21)** com o próprio `deploy/update.sh`, num projeto Compose
+separado (`podiumprodtest`, com volumes próprios) e `DOMAIN=localhost`, caso em que o Caddy
+usa certificado interno. Resultado: build feito; migrations num banco vazio até
+`c5e2a8f41b97`; os três containers no ar; banco sem porta publicada e API só em
+`127.0.0.1`. O `http://` responde `308` para o `https://`, e o `upload_page_url` saiu
+`https://localhost/upload?code=...`. O projeto de teste foi removido depois, com os volumes.
+**Não verificado:** a VM de verdade (ARM64, Security List, iptables da imagem Ubuntu) e o
+certificado do Let's Encrypt, que exige domínio público.
+
+**No ar na VM da Oracle (2026-11-01).** A VM tem Ubuntu 24.04 aarch64, 1 OCPU e 6 GB, com
+Docker 29.9 e Compose 5.6. O `deploy/update.sh` montou a imagem em ARM64 e as migrations
+criaram o banco do zero até `c5e2a8f41b97`. O Caddy obteve o certificado do Let's Encrypt
+em menos de um minuto. Testado pela internet: `/health` em `production`; `/personas` sem
+chave e com chave errada dão `401`, com a chave do app `200`; o `upload_page_url` sai com
+`https://`; o `http://` dá `308`; as portas 8000, 5432 e 5433 não respondem de fora.
+- **Domínio: sslip.io, e não DuckDNS.** O nome é o próprio IP com hífens
+  (`<a-b-c-d>.sslip.io`) e resolve para ele sem conta nem cadastro. Em troca, se o IP mudar
+  (VM recriada), o domínio muda junto: `DOMAIN` e `BACKEND_CORS_ORIGINS` no `.env` da VM e
+  o `podium-api-url.txt` no headset. O DuckDNS continua sendo a saída para um nome fixo.
+- **iptables da imagem Ubuntu:** a cadeia INPUT recusa tudo menos a 22, mas as portas
+  publicadas pelo Docker passam pela FORWARD, onde `DOCKER-USER` e `DOCKER-FORWARD` vêm
+  antes do `REJECT`. A Security List bastou; o firewall da VM não foi alterado.

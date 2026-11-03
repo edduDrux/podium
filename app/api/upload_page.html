@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Podium — enviar apresentação</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 24px 16px; background: #f4f5f7; color: #1d2330; }
+    main { max-width: 420px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 24px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    h1 { font-size: 1.3rem; margin: 0 0 8px; }
+    p { line-height: 1.4; }
+    label { display: block; font-weight: 600; margin: 16px 0 6px; }
+    input[type=text] { width: 100%; box-sizing: border-box; font-size: 2rem; letter-spacing: .3em; text-align: center; padding: 8px; border: 1px solid #c4c9d4; border-radius: 8px; }
+    input[type=file] { width: 100%; }
+    button { width: 100%; margin-top: 20px; padding: 14px; font-size: 1.1rem; border: 0; border-radius: 8px; background: #2f5bd3; color: #fff; }
+    button:disabled { background: #9aa6c4; }
+    #status { margin-top: 16px; padding: 12px; border-radius: 8px; display: none; }
+    #status.ok { display: block; background: #e3f5e8; color: #1c5b2c; }
+    #status.error { display: block; background: #fbe6e6; color: #8a1f1f; }
+    small { color: #5b6273; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Enviar a apresentação para o headset</h1>
+    <p>Digite o código que aparece no headset e escolha o arquivo.</p>
+    <form id="form">
+      <label for="code">Código</label>
+      <input id="code" type="text" inputmode="numeric" maxlength="6" autocomplete="off" required>
+      <label for="file">Apresentação</label>
+      <input id="file" type="file" accept=".pdf,.pptx" required>
+      <small>PDF ou PPTx, até __MAX_MB__ MB. Com PDF, os slides aparecem na tela da sala.</small>
+      <button id="send" type="submit">Enviar</button>
+    </form>
+    <div id="status" role="status" aria-live="polite"></div>
+  </main>
+  <script>
+    // O código vem da URL (?code=...) e só é usado como texto: nada aqui monta HTML com
+    // dado de fora, então não há onde injetar marcação.
+    const API = "__API_PREFIX__";
+    const form = document.getElementById("form");
+    const code = document.getElementById("code");
+    const file = document.getElementById("file");
+    const send = document.getElementById("send");
+    const statusBox = document.getElementById("status");
+
+    code.value = new URLSearchParams(location.search).get("code") || "";
+
+    function show(kind, message) {
+      statusBox.className = kind;
+      statusBox.textContent = message;
+    }
+
+    // A API responde erro como {"detail": texto} ou, na validação de campos, uma lista.
+    function describe(detail) {
+      if (typeof detail === "string") return detail;
+      if (Array.isArray(detail)) return detail.map(item => item.msg).join("; ");
+      return "A API recusou o envio.";
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const value = code.value.trim();
+      if (!/^\d{6}$/.test(value)) {
+        show("error", "O código tem seis dígitos. Confira o que aparece no headset.");
+        return;
+      }
+
+      const body = new FormData();
+      body.append("file", file.files[0]);
+      send.disabled = true;
+      show("ok", "Enviando...");
+
+      try {
+        const response = await fetch(`${API}/pairings/${value}/file`, { method: "POST", body });
+        const data = await response.json().catch(() => ({}));
+        if (response.ok) {
+          let message = `Recebido: ${data.filename}. Pode voltar ao headset.`;
+          if (data.file_type === "pptx") {
+            message += " Com PPTx os slides não aparecem na sala (as perguntas funcionam); para vê-los, exporte em PDF.";
+          }
+          show("ok", message);
+        } else {
+          show("error", describe(data.detail));
+        }
+      } catch (error) {
+        show("error", "Não foi possível falar com a Podium API. Confira se este aparelho está na mesma rede Wi-Fi do PC.");
+      } finally {
+        send.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

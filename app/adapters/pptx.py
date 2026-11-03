@@ -1,0 +1,47 @@
+from pathlib import Path
+
+from pptx import Presentation as PptxPresentation
+
+from app.domain import slides
+
+
+def extract_text(pptx_path: Path | str) -> str:
+    """Extrai o texto limpo de todos os slides do PPTx enviado pelo Cliente VR.
+
+    Usa o mesmo contrato do `pdf` (`app.domain.slides`), para que o prompt do LLM
+    e o aterramento não precisem saber de qual formato o texto veio.
+    """
+    presentation = PptxPresentation(str(pptx_path))
+    blocks: list[str] = []
+
+    for index, slide in enumerate(presentation.slides, start=1):
+        texts = [text for shape in slide.shapes for text in _shape_text(shape)]
+        content = "\n".join(text for text in texts if text)
+        if content.strip():
+            blocks.append(slides.block(index, content.strip()))
+
+    return slides.assemble(blocks)
+
+
+def _shape_text(shape) -> list[str]:
+    """Texto de uma forma: caixas de texto, tabelas e formas agrupadas."""
+    # Formas agrupadas contêm outras formas — precisa descer recursivamente.
+    if shape.shape_type is not None and getattr(shape, "shapes", None) is not None:
+        return [text for inner in shape.shapes for text in _shape_text(inner)]
+
+    if getattr(shape, "has_table", False):
+        return [" | ".join(cell.text.strip() for cell in row.cells) for row in shape.table.rows]
+
+    if getattr(shape, "has_text_frame", False):
+        return [shape.text_frame.text]
+
+    return []
+
+
+def is_valid_pptx(pptx_path: Path | str) -> bool:
+    """Confere se o arquivo é realmente um PPTx legível antes de persistir a sessão."""
+    try:
+        PptxPresentation(str(pptx_path))
+        return True
+    except Exception:
+        return False

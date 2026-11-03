@@ -1,0 +1,57 @@
+# Produção (VM da Oracle): por cima do docker-compose.yml, nunca sozinho.
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Na VM, o COMPOSE_FILE do .env (deploy/production.env.example) faz o `docker compose`
+# usar os dois arquivos sem os -f. Guia completo: docs/DEPLOY.md.
+
+# O log do Docker cresce sem limite por padrão, e o polling do headset gera uma linha a
+# cada 2 s. Três arquivos de 10 MB por container bastam para investigar um problema.
+x-logging: &logging
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    # O Postgres sai da internet: a API fala com ele por `db:5432`, na rede do Compose.
+    ports: !reset []
+    logging: *logging
+
+  api:
+    logging: *logging
+    # Só dentro da VM. Quem fala com a internet é o Caddy; a porta local serve para testar
+    # por túnel SSH antes de abrir o servidor (docs/DEPLOY.md, passo 8).
+    ports: !override
+      - "127.0.0.1:8000:8000"
+    # Sem o `.:/code` do desenvolvimento: roda o código copiado na imagem, e só os arquivos
+    # das sessões ficam fora dela.
+    volumes: !override
+      - ./storage:/code/storage
+    # Sem `--reload`, que reinicia a API a cada arquivo alterado e derruba a análise em curso.
+    # `--forwarded-allow-ips`: atrás do Caddy, o `upload_page_url` do /pairings precisa sair
+    # com `https://` (vem do `X-Forwarded-Proto`). O `*` é seguro porque a porta 8000 só é
+    # alcançada pelos containers da rede do Compose e pelo próprio host.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips *
+
+  caddy:
+    # Proxy com HTTPS automático: pede e renova o certificado do Let's Encrypt sozinho.
+    image: caddy:2.10.2-alpine
+    container_name: podium_caddy
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      DOMAIN: "${DOMAIN:?defina DOMAIN no .env, por exemplo podium.duckdns.org}"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificados: num volume, para não pedir outro a cada recriação (o Let's Encrypt
+      # limita quantos certificados um domínio pode receber por semana).
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+volumes:
+  caddy_data:
+  caddy_config:

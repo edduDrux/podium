@@ -1,0 +1,5 @@
+# O domínio vem do .env (DOMAIN). Com um nome público, o Caddy obtém o certificado HTTPS
+# e redireciona o http:// para o https:// sem configuração a mais.
+{$DOMAIN} {
+	reverse_proxy api:8000
+}

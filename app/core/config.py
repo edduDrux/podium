@@ -1,7 +1,8 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,12 +14,17 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
+        # Sem isto, um erro de validação despeja no log tudo o que foi lido do .env,
+        # inclusive GEMINI_API_KEY, API_KEY e a senha do banco.
+        hide_input_in_errors=True,
     )
 
     # --- Aplicação ---
     PROJECT_NAME: str = "PODIUM API"
     ENVIRONMENT: str = "development"
-    DEBUG: bool = True
+    # Desligado por padrão: ligado, despeja todo SQL no log (`echo` da engine) e baixa o
+    # nível do logging. O `.env` de desenvolvimento liga explicitamente.
+    DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
 
     # --- Banco de Dados ---
@@ -28,9 +34,12 @@ class Settings(BaseSettings):
     # Não usar ["*"]: o `main.py` sobe o middleware com `allow_credentials=True`, e a spec
     # de CORS proíbe curinga junto de credenciais — o navegador rejeita a resposta e o
     # erro aparece do lado do cliente, longe da causa. Origens explícitas sempre.
-    BACKEND_CORS_ORIGINS: list[str] = Field(
-        default_factory=lambda: ["http://localhost:3000"]
-    )
+    BACKEND_CORS_ORIGINS: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+
+    # --- Acesso: a chave que o Cliente VR manda no cabeçalho `X-API-Key` ---
+    # Vazia, a API não confere nada: é o modo da LAN de desenvolvimento. Em produção ela é
+    # obrigatória (ver `_require_api_key_in_production`).
+    API_KEY: str = ""
 
     # --- IA: Google Gemini (free tier) ---
     # O Gemini expõe DUAS interfaces e o PODIUM usa as duas:
@@ -39,8 +48,10 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     LLM_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     GEMINI_API_BASE: str = "https://generativelanguage.googleapis.com/v1beta"
-    LLM_MODEL: str = "gemini-flash-latest"
-    STT_MODEL: str = "gemini-flash-latest"
+    # `gemini-flash-latest` falhou em 7/7 chamadas de STT por 503 (DECISOES §8); um
+    # default que já se mostrou indisponível é armadilha para quem sobe sem `.env`.
+    LLM_MODEL: str = "gemini-3.5-flash"
+    STT_MODEL: str = "gemini-3.5-flash"
 
     # A tarefa da banca é extrair e cobrar o que está no material, não variar
     # criativamente — e criatividade, aqui, se manifesta como invenção.
@@ -58,8 +69,8 @@ class Settings(BaseSettings):
     # Ninguém fala o slide palavra por palavra, então os limiares são deliberadamente
     # baixos. Valores iniciais do PRD Fase 3 — calibrar com sessões reais antes de
     # fixar no relatório.
-    COVERAGE_FULL_THRESHOLD: float = 0.6      # score >= : slide apresentado
-    COVERAGE_PARTIAL_THRESHOLD: float = 0.3   # score >= : parcialmente apresentado
+    COVERAGE_FULL_THRESHOLD: float = 0.6  # score >= : slide apresentado
+    COVERAGE_PARTIAL_THRESHOLD: float = 0.3  # score >= : parcialmente apresentado
     # Cobertura global abaixo disto liga o alerta de descolamento entre material e
     # fala — o campo que o teste adversarial do §14 mede.
     COVERAGE_ALERT_THRESHOLD: float = 0.15
@@ -71,6 +82,22 @@ class Settings(BaseSettings):
     # Retenção dos arquivos de sessão. 0 desativa a limpeza automática.
     STORAGE_RETENTION_HOURS: int = 24
     CLEANUP_INTERVAL_MINUTES: int = 60
+
+    # --- Pareamento (envio da apresentação pelo celular para o headset) ---
+    # Curto de propósito: sem autenticação, a validade do código é o que limita o envio a
+    # quem está vendo o headset. Dez minutos bastam para abrir a página e escolher o PDF.
+    PAIRING_TTL_MINUTES: int = 10
+
+    @model_validator(mode="after")
+    def _require_api_key_in_production(self) -> Self:
+        """Esquecer a chave no `.env` do servidor deixaria a API aberta na internet sem
+        nenhum aviso. Recusar a subida transforma o esquecimento num erro visível."""
+        if self.ENVIRONMENT == "production" and not self.API_KEY:
+            raise ValueError(
+                "API_KEY é obrigatória com ENVIRONMENT=production. "
+                "Gere uma com `openssl rand -hex 32` e coloque no .env."
+            )
+        return self
 
     @property
     def storage_path(self) -> Path:

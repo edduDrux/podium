@@ -1,0 +1,188 @@
+import asyncio
+import base64
+import logging
+import uuid
+from pathlib import Path
+
+import aiofiles
+import httpx
+
+from app.core.config import settings
+from app.core.enums import LLMCallStage
+from app.domain.ports import Audit
+from app.domain.text import clean_transcript
+
+logger = logging.getLogger(__name__)
+
+# Gravado em `llm_calls.provider`: o relatório compara custo e latência por provedor.
+PROVIDER = "gemini"
+
+# A transcrição precisa ser fiel, não criativa.
+STT_TEMPERATURE = 0.0
+
+# Só o 503 é retentado: é o Gemini declarando pico de demanda transitório ("spikes in
+# demand are usually temporary" — medido em sessão real, 2026-08-30, três análises
+# perdidas por desistir na primeira tentativa). 429 fica de fora porque cota estourada
+# não volta em segundos, e 4xx é erro nosso. Duas esperas curtas e fixas respeitam o
+# veto do CLAUDE.md §5 a retry agressivo; o LLM não precisa do equivalente — o SDK
+# `openai` já retenta 5xx sozinho, este caminho `httpx` é que não tinha nada.
+WAITS_AFTER_503_S = (5.0, 15.0)
+
+# O Gemini não expõe um endpoint estilo Whisper (/audio/transcriptions): a transcrição
+# é feita pelo modelo multimodal, recebendo o áudio inline junto de uma instrução.
+TRANSCRIPTION_PROMPT = (
+    "Transcreva integralmente o áudio desta apresentação em {language}. "
+    "Responda APENAS com a transcrição literal do que foi falado, sem comentários, "
+    "sem marcações de tempo e sem identificar locutores. "
+    "Não escreva nenhum caractere que não tenha sido falado: nada de emojis, símbolos "
+    "ou decorações — apenas as palavras ditas e a pontuação da fala. Nunca interrompa "
+    "uma palavra com qualquer símbolo. "
+    "Se não houver fala audível, responda com uma string vazia."
+)
+
+MIME_BY_SUFFIX = {
+    ".mp3": "audio/mp3",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".m4a": "audio/mp4",
+    ".aac": "audio/aac",
+    ".flac": "audio/flac",
+    ".webm": "audio/webm",
+}
+
+LANGUAGE_NAMES = {"pt": "português do Brasil", "en": "inglês", "es": "espanhol"}
+
+
+def _mime_type(path: Path) -> str:
+    return MIME_BY_SUFFIX.get(path.suffix.lower(), "audio/mp3")
+
+
+class GeminiTranscriber:
+    """Adaptador do `Transcriber` para a API nativa do Gemini.
+
+    Recebe a auditoria em vez de importá-la: é o que impede este módulo — que só precisa
+    falar HTTP com o Gemini — de arrastar o SQLAlchemy junto por dependência transitiva.
+    """
+
+    def __init__(self, audit: Audit) -> None:
+        self._audit = audit
+
+    async def transcribe(
+        self,
+        audio_path: Path | str,
+        language: str = "pt",
+        presentation_id: uuid.UUID | None = None,
+    ) -> str:
+        return await _transcribe(self._audit, audio_path, language, presentation_id)
+
+
+async def _transcribe(
+    audit: Audit,
+    audio_path: Path | str,
+    language: str = "pt",
+    presentation_id: uuid.UUID | None = None,
+) -> str:
+    """Converte o áudio da apresentação em texto via Gemini (multimodal).
+
+    `presentation_id` serve só para a auditoria (`LLMCall`); omiti-lo desliga o registro
+    e mantém a transcrição utilizável fora de uma sessão.
+    """
+    path = Path(audio_path)
+    # Até `MAX_INLINE_AUDIO_MB` lidos do disco: `aiofiles`, para não prender o loop.
+    async with aiofiles.open(path, "rb") as audio_file:
+        audio_bytes = await audio_file.read()
+
+    size_mb = len(audio_bytes) / 1024 / 1024
+    if size_mb > settings.MAX_INLINE_AUDIO_MB:
+        raise ValueError(
+            f"Áudio de {size_mb:.1f} MB excede o limite de "
+            f"{settings.MAX_INLINE_AUDIO_MB} MB para envio inline ao Gemini."
+        )
+
+    prompt = TRANSCRIPTION_PROMPT.format(language=LANGUAGE_NAMES.get(language, language))
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt},
+                    {
+                        "inline_data": {
+                            "mime_type": _mime_type(path),
+                            "data": base64.b64encode(audio_bytes).decode(),
+                        }
+                    },
+                ]
+            }
+        ],
+        "generationConfig": {"temperature": STT_TEMPERATURE},
+    }
+
+    url = f"{settings.GEMINI_API_BASE}/models/{settings.STT_MODEL}:generateContent"
+
+    async with audit.measure(
+        presentation_id=presentation_id,
+        stage=LLMCallStage.STT,
+        provider=PROVIDER,
+        model=settings.STT_MODEL,
+        temperature=STT_TEMPERATURE,
+    ) as usage:
+        async with httpx.AsyncClient(timeout=settings.AI_TIMEOUT_SECONDS) as client:
+            response = await _post_with_retry(client, url, payload)
+            body = response.json()
+
+        usage.update(_extract_usage(body))
+        return _extract_text(body)
+
+
+async def _post_with_retry(client: httpx.AsyncClient, url: str, payload: dict) -> httpx.Response:
+    """Envia a requisição ao Gemini, retentando apenas o 503 transitório.
+
+    Qualquer outro status de erro levanta na hora (`raise_for_status`), preservando o
+    comportamento anterior; esgotadas as esperas de `WAITS_AFTER_503_S`, o próprio 503
+    levanta e segue o caminho normal de falha — a sessão fica FAILED com a mensagem real.
+    """
+    for wait in (*WAITS_AFTER_503_S, None):
+        response = await client.post(
+            url,
+            json=payload,
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": settings.GEMINI_API_KEY,
+            },
+        )
+        if response.status_code != 503 or wait is None:
+            response.raise_for_status()
+            return response
+
+        logger.warning(
+            "Gemini indisponível (503) na transcrição; nova tentativa em %.0f s.",
+            wait,
+        )
+        await asyncio.sleep(wait)
+
+    raise AssertionError("inalcançável: a última iteração sempre retorna ou levanta")
+
+
+def _extract_usage(body: dict) -> dict[str, int | None]:
+    """Lê o consumo de tokens da resposta nativa do Gemini.
+
+    Tolerante de propósito: o formato do `usageMetadata` não é contrato estável, e uma
+    mudança lá não pode quebrar a transcrição — no pior caso a auditoria fica sem os
+    números daquela chamada.
+    """
+    usage = body.get("usageMetadata") or {}
+    return {
+        "input_tokens": usage.get("promptTokenCount"),
+        "output_tokens": usage.get("candidatesTokenCount"),
+    }
+
+
+def _extract_text(body: dict) -> str:
+    """Extrai o texto da resposta do Gemini, tolerando respostas vazias/bloqueadas."""
+    candidates = body.get("candidates") or []
+    if not candidates:
+        feedback = body.get("promptFeedback", {})
+        raise RuntimeError(f"Gemini não retornou transcrição. Detalhe: {feedback}")
+
+    parts = candidates[0].get("content", {}).get("parts") or []
+    return clean_transcript("".join(part.get("text", "") for part in parts))
